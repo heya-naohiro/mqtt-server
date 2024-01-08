@@ -23,21 +23,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     return;
                 }
                 /* Processing */
-                buf = handle_tcp_packet(&mut buf);
+                buf = match handle_tcp_packet(&mut buf) {
+                    Ok(buf) => buf,
+                    Err(_) => return,
+                };
 
                 socket
                     .write_all(&buf[0..])
                     .await
                     .expect("failed to write data to socket");
+
+                socket.flush().await.expect("failed to flush");
             }
         });
     }
 }
 
-fn handle_tcp_packet(buf: &mut Vec<u8>) -> Vec<u8> {
+struct HandleMQTTPacketError;
+
+fn handle_tcp_packet(buf: &mut Vec<u8>) -> Result<Vec<u8>, HandleMQTTPacketError> {
     let mut dec_buf = Cursor::new(&buf);
-    let auto_decode = VariablePacket::decode(&mut dec_buf).unwrap();
+    let auto_decode = VariablePacket::decode(&mut dec_buf);
+    let auto_decode = match auto_decode {
+        Ok(result) => result,
+        Err(_) => {
+            println!("Packet Decode Error :{:x?}", buf);
+            return Err(HandleMQTTPacketError);
+        }
+    };
     let mut buf = Vec::new();
+    println!("autodecode Packet {:?}", auto_decode);
     match auto_decode {
         VariablePacket::ConnectPacket(_) => {
             let packet = ConnackPacket::new(false, ConnectReturnCode::ConnectionAccepted);
@@ -57,7 +72,7 @@ fn handle_tcp_packet(buf: &mut Vec<u8>) -> Vec<u8> {
             println!("Other Packet {:?}", auto_decode);
         }
     }
-    return buf;
+    return Ok(buf);
 }
 
 /*
