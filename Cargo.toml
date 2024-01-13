@@ -12,4 +12,3 @@ bytes = "1"
 mini-redis = "0.4"
 tokio-util = { version = "0.7.10", features = ["full"]}
 futures = "0.3.30"
-mqttrs = "0.4.1"
