@@ -16,6 +16,7 @@ pub struct Connack {
 }
 impl Connack {
     pub fn new() -> Connack {
+        // [TODO] Implement actual operation and return code
         Connack {
             session_present: false,
             return_code: 0,
