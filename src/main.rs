@@ -1,10 +1,9 @@
 mod mqttdecoder;
 
 use futures::prelude::stream::StreamExt;
-use std::error::Error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+//use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_util::codec::{FramedRead, LengthDelimitedCodec};
+use tokio_util::codec::FramedRead;
 #[tokio::main]
 async fn main() {
     // リスナーをこのアドレスにバインドする
@@ -18,7 +17,8 @@ async fn main() {
 }
 
 async fn process(socket: TcpStream) {
-    let mut frame_reader = FramedRead::new(socket, mqttdecoder::MqttDecoder {});
+    let decoder = mqttdecoder::MqttDecoder::new();
+    let mut frame_reader = FramedRead::new(socket, decoder);
     while let Some(frame) = frame_reader.next().await {
         match frame {
             Ok(data) => println!("received: {:?}", data),
