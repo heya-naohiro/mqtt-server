@@ -7,11 +7,9 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 
 #[tokio::main]
 async fn main() {
-    // リスナーをこのアドレスにバインドする
     let listener = TcpListener::bind("127.0.0.1:7878").await.unwrap();
 
     loop {
-        // タプルの2つ目の要素は、新しいコネクションのIPとポートの情報を含んでいる
         let (socket, _) = listener.accept().await.unwrap();
         process(socket).await;
     }
