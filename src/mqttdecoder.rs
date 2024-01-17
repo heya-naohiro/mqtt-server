@@ -11,6 +11,7 @@ pub enum MQTTPacket {
     Publish(Publish),
     Other,
 }
+#[derive(Debug)]
 pub enum MQTTPacketHeader {
     Connect,
     Connack,
@@ -65,7 +66,7 @@ impl Publish {
         let slice = &buf[2..(2 + topic_length)];
         let topic_name = match std::str::from_utf8(slice) {
             Ok(v) => v,
-            Err(e) => {
+            Err(_) => {
                 return Err(Error::new(ErrorKind::Other, "Invalid"));
             }
         };
@@ -91,7 +92,7 @@ impl MqttDecoder {
         MqttDecoder { header: None }
     }
 }
-
+#[derive(Debug)]
 struct Header {
     mtype: MQTTPacketHeader,
     dup: bool,
@@ -149,9 +150,10 @@ impl Decoder for MqttDecoder {
     type Item = MQTTPacket;
     type Error = std::io::Error;
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        match self.header {
+        match &self.header {
             None => {
                 let length = src.len();
+                println!("Length: {:?}", length);
                 if src.len() < 2 {
                     return Ok(None);
                 }
@@ -163,29 +165,45 @@ impl Decoder for MqttDecoder {
                     Err(e) => return Err(e),
                 };
 
-                self.header = Some(header);
+                // 後にheader.mtypeでパターンマッチするのでここでselfに格納しない
+                //self.header = Some(header);
+                println!("header {:?}", header);
+                println!("fixed header advance {:?} bytes", readbyte);
+
                 src.advance(readbyte);
-                match Some(self.header) {
-                    MQTTPacketHeader::Connect => Ok(Some(MQTTPacket::Connect)),
+                match header.mtype {
+                    MQTTPacketHeader::Connect => {
+                        //これ以上処理しないので（いまのところ）残りのbyteを破棄する
+                        src.advance(src.len());
+                        Ok(Some(MQTTPacket::Connect))
+                    }
                     MQTTPacketHeader::Publish => {
+                        // Decoderに格納する
+                        self.header = Some(header);
                         let (variable_header_only, readbyte) = match Publish::from_byte(src) {
                             Ok(Some(value)) => value,
                             Ok(None) => return Ok(None),
                             Err(e) => return Err(e),
                         };
+
+                        println!("variable header advance {:?} bytes", readbyte);
                         src.advance(readbyte);
                         // TODO: add payload processing
                         Ok(Some(MQTTPacket::Publish(variable_header_only)))
                     }
                     _ => {
-                        src.advance(length);
+                        //これ以上処理しないので（いまのところ）残りのbyteを破棄する
+                        src.advance(src.len());
                         Err(Error::new(ErrorKind::Other, "Invalid"))
                     }
                 }
             }
             Some(header) => match header.mtype {
                 // [TODO] second packet implement
-                _ => Err(Error::new(ErrorKind::Other, "Invalid")),
+                _ => {
+                    println!("Second packet not implement {:?}", header.mtype);
+                    Err(Error::new(ErrorKind::Other, "Invalid"))
+                }
             },
         }
     }

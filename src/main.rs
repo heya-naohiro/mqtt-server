@@ -42,6 +42,9 @@ async fn process(mut socket: TcpStream) {
                             }
                         }
                     }
+                    mqttdecoder::MQTTPacket::Publish(packet) => {
+                        println!("Publish Packet {:?}", packet);
+                    }
                     _ => {}
                 }
             }
