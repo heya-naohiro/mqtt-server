@@ -175,7 +175,7 @@ impl Decoder for MqttDecoder {
                 }
 
                 // 固定ヘッダーに可変長(残りの長さを含むため固定ヘッダーを解読できたら読んだreadbyte分進める必要がある)
-                let (header, readbyte) = match read_header(src) {
+                let (mut header, readbyte) = match read_header(src) {
                     Ok(Some(value)) => value,
                     Ok(None) => return Ok(None),
                     Err(e) => return Err(e),
@@ -224,11 +224,17 @@ impl Decoder for MqttDecoder {
             // ここに来るということは、variable headerも読んだ状態、つまりpayloadの処理
             Some(header) => match header.mtype {
                 // [TODO] second packet implement
-                MQTTPacketHeader::Publish => match &self.packet {
-                    Some(MQTTPacket::Publish(publish)) => {
+                /*
+                _ => {
+                    let packet = self.packet.take();
+                    return Ok(packet);
+                } */
+                //
+                MQTTPacketHeader::Publish => match self.packet.take() {
+                    Some(MQTTPacket::Publish(mut publish)) => {
                         let readbyte = match publish.payload_from_byte(src) {
                             Ok(value) => value,
-                            Err(error) => {
+                            Err(_error) => {
                                 return Err(Error::new(ErrorKind::Other, "Invalid"));
                             }
                         };
