@@ -1,6 +1,7 @@
 use bytes::Buf;
 use bytes::BufMut;
 use bytes::BytesMut;
+use mqttrs::Packet;
 use std::io::{Error, ErrorKind};
 use std::str;
 use tokio_util::codec::{Decoder, Encoder};
@@ -47,13 +48,21 @@ impl Connack {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)] // Cloneを追加
 pub struct Publish {
     topic_name: String,
     message_id: u32,
+    // まずは小さいサイズ想定ですべてVec<u8>にコピーする
+    payload: Vec<u8>,
 }
 
 impl Publish {
+    pub fn payload_from_byte(&mut self, buf: &mut BytesMut) -> Result<usize, Error> {
+        let added_vec: Vec<u8> = buf.to_vec();
+        self.payload.extend_from_slice(&added_vec);
+        return Ok(added_vec.len());
+    }
+
     pub fn from_byte(buf: &mut BytesMut) -> Result<Option<(Publish, usize)>, Error> {
         // topic length : 2 byte + Message Identification length: 2byte
         if buf.len() < 4 {
@@ -77,6 +86,7 @@ impl Publish {
             Publish {
                 topic_name: String::from(topic_name),
                 message_id,
+                payload: vec![],
             },
             4 + topic_length,
         )));
@@ -85,11 +95,15 @@ impl Publish {
 
 pub struct MqttDecoder {
     header: Option<Header>,
+    packet: Option<MQTTPacket>,
 }
 
 impl MqttDecoder {
     pub fn new() -> MqttDecoder {
-        MqttDecoder { header: None }
+        MqttDecoder {
+            header: None,
+            packet: None,
+        }
     }
 }
 #[derive(Debug)]
@@ -99,6 +113,7 @@ struct Header {
     qos: usize,
     retain: bool,
     remaining_length: usize,
+    realremaining_length: usize,
 }
 
 impl Header {}
@@ -140,6 +155,7 @@ fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
                 qos: qos.into(),
                 retain,
                 remaining_length,
+                realremaining_length: remaining_length,
             },
             advance,
         )));
@@ -179,7 +195,8 @@ impl Decoder for MqttDecoder {
                     }
                     MQTTPacketHeader::Publish => {
                         // Decoderに格納する
-                        self.header = Some(header);
+                        //let remain_length = header.remaining_length;
+                        //
                         let (variable_header_only, readbyte) = match Publish::from_byte(src) {
                             Ok(Some(value)) => value,
                             Ok(None) => return Ok(None),
@@ -188,8 +205,14 @@ impl Decoder for MqttDecoder {
 
                         println!("variable header advance {:?} bytes", readbyte);
                         src.advance(readbyte);
-                        // TODO: add payload processing
-                        Ok(Some(MQTTPacket::Publish(variable_header_only)))
+                        //let remain_length = remain_length - readbyte;
+                        // save packet temporary
+                        header.realremaining_length = header.realremaining_length - readbyte;
+                        self.packet = Some(MQTTPacket::Publish(variable_header_only));
+                        self.header = Some(header);
+                        // process publish packet
+                        // 強制的に次のターンに持ち込みpaylodを処理する（残りが何byteであろうと)
+                        Ok(None)
                     }
                     _ => {
                         //これ以上処理しないので（いまのところ）残りのbyteを破棄する
@@ -198,8 +221,29 @@ impl Decoder for MqttDecoder {
                     }
                 }
             }
+            // ここに来るということは、variable headerも読んだ状態、つまりpayloadの処理
             Some(header) => match header.mtype {
                 // [TODO] second packet implement
+                MQTTPacketHeader::Publish => match &self.packet {
+                    Some(MQTTPacket::Publish(publish)) => {
+                        let readbyte = match publish.payload_from_byte(src) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                return Err(Error::new(ErrorKind::Other, "Invalid"));
+                            }
+                        };
+                        src.advance(readbyte);
+                        if header.realremaining_length - readbyte > 0 {
+                            Ok(None)
+                        } else {
+                            Ok(Some(MQTTPacket::Publish(publish.clone())))
+                        }
+                    }
+                    _ => {
+                        println!("Error arienai");
+                        Err(Error::new(ErrorKind::Other, "Invalid"))
+                    }
+                },
                 _ => {
                     println!("Second packet not implement {:?}", header.mtype);
                     Err(Error::new(ErrorKind::Other, "Invalid"))
