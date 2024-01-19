@@ -57,7 +57,12 @@ pub struct Publish {
 }
 
 impl Publish {
-    pub fn payload_from_byte(&mut self, buf: &mut BytesMut) -> Result<usize, Error> {
+    pub fn payload_from_byte(&mut self, buf: &mut BytesMut, remain: usize) -> Result<usize, Error> {
+        if buf.len() > remain {
+            let added_vec: Vec<u8> = buf[..remain].to_vec();
+            self.payload.extend_from_slice(&added_vec);
+            return Ok(added_vec.len());
+        }
         let added_vec: Vec<u8> = buf.to_vec();
         self.payload.extend_from_slice(&added_vec);
         return Ok(added_vec.len());
@@ -96,6 +101,7 @@ impl Publish {
 pub struct MqttDecoder {
     header: Option<Header>,
     packet: Option<MQTTPacket>,
+    realremaining_length: usize,
 }
 
 impl MqttDecoder {
@@ -103,6 +109,7 @@ impl MqttDecoder {
         MqttDecoder {
             header: None,
             packet: None,
+            realremaining_length: 0,
         }
     }
 }
@@ -113,7 +120,6 @@ struct Header {
     qos: usize,
     retain: bool,
     remaining_length: usize,
-    realremaining_length: usize,
 }
 
 impl Header {}
@@ -155,7 +161,6 @@ fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
                 qos: qos.into(),
                 retain,
                 remaining_length,
-                realremaining_length: remaining_length,
             },
             advance,
         )));
@@ -175,12 +180,12 @@ impl Decoder for MqttDecoder {
                 }
 
                 // 固定ヘッダーに可変長(残りの長さを含むため固定ヘッダーを解読できたら読んだreadbyte分進める必要がある)
-                let (mut header, readbyte) = match read_header(src) {
+                let (header, readbyte) = match read_header(src) {
                     Ok(Some(value)) => value,
                     Ok(None) => return Ok(None),
                     Err(e) => return Err(e),
                 };
-
+                self.realremaining_length = header.remaining_length;
                 // 後にheader.mtypeでパターンマッチするのでここでselfに格納しない
                 //self.header = Some(header);
                 println!("header {:?}", header);
@@ -203,15 +208,24 @@ impl Decoder for MqttDecoder {
                             Err(e) => return Err(e),
                         };
 
-                        println!("variable header advance {:?} bytes", readbyte);
+                        println!(
+                            "variable header advance {:?} bytes, realremaining_length {:?}",
+                            readbyte, self.realremaining_length
+                        );
+                        println!("variable header {:?}", variable_header_only);
                         src.advance(readbyte);
-                        //let remain_length = remain_length - readbyte;
                         // save packet temporary
-                        header.realremaining_length = header.realremaining_length - readbyte;
+                        println!("byte check {:?} {:?}", self.realremaining_length, readbyte);
+                        if self.realremaining_length < readbyte {
+                            return Err(Error::new(ErrorKind::Other, "Invalid byte size zbbb"));
+                        }
+                        self.realremaining_length = self.realremaining_length - readbyte;
+
                         self.packet = Some(MQTTPacket::Publish(variable_header_only));
                         self.header = Some(header);
                         // process publish packet
                         // 強制的に次のターンに持ち込みpaylodを処理する（残りが何byteであろうと)
+                        println!("next!!!");
                         Ok(None)
                     }
                     _ => {
@@ -232,16 +246,30 @@ impl Decoder for MqttDecoder {
                 //
                 MQTTPacketHeader::Publish => match self.packet.take() {
                     Some(MQTTPacket::Publish(mut publish)) => {
-                        let readbyte = match publish.payload_from_byte(src) {
-                            Ok(value) => value,
-                            Err(_error) => {
-                                return Err(Error::new(ErrorKind::Other, "Invalid"));
-                            }
-                        };
+                        println!("HERE!!!!!111111");
+                        let readbyte =
+                            match publish.payload_from_byte(src, self.realremaining_length) {
+                                Ok(value) => value,
+                                Err(_error) => {
+                                    return Err(Error::new(ErrorKind::Other, "Invalid"));
+                                }
+                            };
                         src.advance(readbyte);
-                        if header.realremaining_length - readbyte > 0 {
+                        println!("HERE!!!!! {:?}, {:?}", self.realremaining_length, readbyte);
+
+                        if self.realremaining_length < readbyte {
+                            return Err(Error::new(ErrorKind::Other, "Invalid byte size AAA"));
+                        }
+
+                        self.realremaining_length = self.realremaining_length - readbyte;
+                        if self.realremaining_length > src.len() {
                             Ok(None)
                         } else {
+                            {
+                                let strpayload_check =
+                                    String::from_utf8(publish.payload.clone()).unwrap();
+                                println!("Packet publish {:?}", strpayload_check);
+                            }
                             Ok(Some(MQTTPacket::Publish(publish.clone())))
                         }
                     }
