@@ -58,6 +58,7 @@ pub struct Publish {
 
 impl Publish {
     pub fn payload_from_byte(&mut self, buf: &mut BytesMut, remain: usize) -> Result<usize, Error> {
+        println!("->>>> {:?}", buf);
         if buf.len() > remain {
             let added_vec: Vec<u8> = buf[..remain].to_vec();
             self.payload.extend_from_slice(&added_vec);
@@ -68,7 +69,7 @@ impl Publish {
         return Ok(added_vec.len());
     }
 
-    pub fn from_byte(buf: &mut BytesMut) -> Result<Option<(Publish, usize)>, Error> {
+    pub fn from_byte(buf: &mut BytesMut, qos0: bool) -> Result<Option<(Publish, usize)>, Error> {
         // topic length : 2 byte + Message Identification length: 2byte
         if buf.len() < 4 {
             return Ok(None);
@@ -84,7 +85,16 @@ impl Publish {
                 return Err(Error::new(ErrorKind::Other, "Invalid"));
             }
         };
-        let message_id: u32 = ((buf[2 + topic_length] as u32) << 8) + buf[3 + topic_length] as u32;
+        let (message_id, readsize) = if qos0 {
+            (0, 2 + topic_length)
+        } else {
+            (
+                ((buf[2 + topic_length] as u32) << 8) + buf[3 + topic_length] as u32,
+                4 + topic_length,
+            )
+        };
+
+        //let message_id: u32 =
 
         // [TODO]
         return Ok(Some((
@@ -93,7 +103,7 @@ impl Publish {
                 message_id,
                 payload: vec![],
             },
-            4 + topic_length,
+            readsize,
         )));
     }
 }
@@ -202,11 +212,12 @@ impl Decoder for MqttDecoder {
                         // Decoderに格納する
                         //let remain_length = header.remaining_length;
                         //
-                        let (variable_header_only, readbyte) = match Publish::from_byte(src) {
-                            Ok(Some(value)) => value,
-                            Ok(None) => return Ok(None),
-                            Err(e) => return Err(e),
-                        };
+                        let (variable_header_only, readbyte) =
+                            match Publish::from_byte(src, header.qos == 0) {
+                                Ok(Some(value)) => value,
+                                Ok(None) => return Ok(None),
+                                Err(e) => return Err(e),
+                            };
 
                         println!(
                             "variable header advance {:?} bytes, realremaining_length {:?}",
