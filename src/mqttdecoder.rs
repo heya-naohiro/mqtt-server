@@ -10,11 +10,13 @@ pub enum MQTTPacket {
     Connect,
     Connack(Connack),
     Publish(Publish),
+    Disconnect,
     Other,
 }
 #[derive(Debug)]
 pub enum MQTTPacketHeader {
     Connect,
+    Disconnect,
     Connack,
     Publish,
     Other,
@@ -122,6 +124,11 @@ impl MqttDecoder {
             realremaining_length: 0,
         }
     }
+    pub fn reset(&mut self) {
+        self.header = None;
+        self.packet = None;
+        self.realremaining_length = 0;
+    }
 }
 #[derive(Debug)]
 struct Header {
@@ -161,6 +168,7 @@ fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
         }
         let mtype = match byte >> 4 {
             1 => MQTTPacketHeader::Connect,
+            14 => MQTTPacketHeader::Disconnect,
             3 => MQTTPacketHeader::Publish,
             _ => MQTTPacketHeader::Other,
         };
@@ -206,7 +214,13 @@ impl Decoder for MqttDecoder {
                     MQTTPacketHeader::Connect => {
                         //これ以上処理しないので（いまのところ）残りのbyteを破棄する
                         src.advance(src.len());
+                        self.reset();
                         Ok(Some(MQTTPacket::Connect))
+                    }
+                    MQTTPacketHeader::Disconnect => {
+                        src.advance(src.len());
+                        self.reset();
+                        Ok(Some(MQTTPacket::Disconnect))
                     }
                     MQTTPacketHeader::Publish => {
                         // Decoderに格納する
@@ -281,11 +295,13 @@ impl Decoder for MqttDecoder {
                                     String::from_utf8(publish.payload.clone()).unwrap();
                                 println!("Packet publish {:?}", strpayload_check);
                             }
-                            Ok(Some(MQTTPacket::Publish(publish.clone())))
+                            // reset for next
+                            self.reset();
+                            Ok(Some(MQTTPacket::Publish(publish)))
                         }
                     }
                     _ => {
-                        println!("Error arienai");
+                        println!("Error arienai, {:?}, {:x?}", src.len(), src);
                         Err(Error::new(ErrorKind::Other, "Invalid"))
                     }
                 },

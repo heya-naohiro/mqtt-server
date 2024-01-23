@@ -2,7 +2,10 @@ mod mqttdecoder;
 
 use futures::{prelude::stream::StreamExt, SinkExt};
 //use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{
+    io::AsyncWriteExt,
+    net::{TcpListener, TcpStream},
+};
 use tokio_util::codec::{FramedRead, FramedWrite};
 
 #[tokio::main]
@@ -45,10 +48,19 @@ async fn process(mut socket: TcpStream) {
                     mqttdecoder::MQTTPacket::Publish(packet) => {
                         println!("Publish Packet {:?}", packet);
                     }
+                    mqttdecoder::MQTTPacket::Disconnect => {
+                        break;
+                    }
                     _ => {}
                 }
             }
             Err(err) => eprintln!("error: {:?}", err),
         }
+    }
+    // disconnect
+    let result = socket.shutdown().await;
+    match result {
+        Ok(()) => println!("TCP stream disconnected successfully"),
+        Err(err) => eprintln!("Error disconnecting TCP stream: {}", err),
     }
 }
