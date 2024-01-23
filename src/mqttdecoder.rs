@@ -1,9 +1,7 @@
 use bytes::Buf;
 use bytes::BufMut;
 use bytes::BytesMut;
-use mqttrs::Packet;
 use std::io::{Error, ErrorKind};
-use std::str;
 use tokio_util::codec::{Decoder, Encoder};
 #[derive(Debug)]
 pub enum MQTTPacket {
@@ -11,13 +9,13 @@ pub enum MQTTPacket {
     Connack(Connack),
     Publish(Publish),
     Disconnect,
-    Other,
+    _Other,
 }
 #[derive(Debug)]
 pub enum MQTTPacketHeader {
     Connect,
     Disconnect,
-    Connack,
+    _Connack,
     Publish,
     Other,
 }
