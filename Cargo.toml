@@ -11,3 +11,7 @@ bytes = "1"
 mini-redis = "0.4"
 tokio-util = { version = "0.7.10", features = ["full"]}
 futures = "0.3.30"
+tokio-rustls = {version = "0.25.0"}
+rustls = { version = "0.22", default-features = false }
+pki-types = { package = "rustls-pki-types", version = "1" }
+rustls-pemfile = "2"
