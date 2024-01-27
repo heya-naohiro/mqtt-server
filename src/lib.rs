@@ -5,7 +5,7 @@ use futures::SinkExt;
 use std::io::{self};
 //use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use tokio::io::split;
+use tokio::io::{split, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::codec::{FramedRead, FramedWrite};
@@ -18,15 +18,28 @@ fn internal_adder(a: i32, b: i32) -> i32 {
     a + b
 }
 
-pub async fn process(socket: &mut TcpStream, acceptor: TlsAcceptor) -> io::Result<()> {
-    // Split TcpStream https://zenn.dev/magurotuna/books/tokio-tutorial-ja/viewer/io
-    let socket = match acceptor.accept(socket).await {
+pub async fn process_connection(socket: &mut TcpStream, acceptor: TlsAcceptor) -> io::Result<()> {
+    if let Err(err) = process(socket, acceptor).await {
+        println!("Error process from err {:?}", err);
+        socket.shutdown().await?;
+        return Err(err);
+    } else {
+        println!("Shutdown process from Successfully");
+        socket.flush().await?;
+        socket.shutdown().await?;
+    }
+    return Ok(());
+}
+
+async fn process(socket: &mut TcpStream, acceptor: TlsAcceptor) -> io::Result<()> {
+    let mut socket = match acceptor.accept(socket).await {
         Ok(value) => value,
         Err(error) => {
             return Err(error);
         }
     };
-    let stream = socket;
+
+    let stream = &mut socket;
     let (rd, wr) = split(stream);
 
     let decoder = mqttdecoder::MqttDecoder::new();
@@ -57,6 +70,7 @@ pub async fn process(socket: &mut TcpStream, acceptor: TlsAcceptor) -> io::Resul
                         println!("Publish Packet {:?}", packet);
                     }
                     mqttdecoder::MQTTPacket::Disconnect => {
+                        // disconnect
                         break;
                     }
                     _ => {}
@@ -65,8 +79,6 @@ pub async fn process(socket: &mut TcpStream, acceptor: TlsAcceptor) -> io::Resul
             Err(err) => eprintln!("error: {:?}", err),
         }
     }
-
-    // disconnect
     return Ok(());
 }
 

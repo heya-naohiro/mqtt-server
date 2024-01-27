@@ -35,12 +35,10 @@ async fn main() -> io::Result<()> {
     loop {
         let (mut stream, addr) = listener.accept().await.unwrap();
         let acceptor = acceptor.clone();
-        if let Err(err) = mqttserver::process(&mut stream, acceptor).await {
-            println!("Error Shutdown from {:?}, err {:?}", addr, err);
-            stream.shutdown().await?;
+        if let Err(err) = mqttserver::process_connection(&mut stream, acceptor).await {
+            println!("Error process from {:?}, err {:?}", addr, err);
         } else {
-            println!("Shutdown from {:?} Successfully", addr);
-            stream.shutdown().await?;
+            println!("Shutdown process from {:?} Successfully", addr);
         }
     }
 }
