@@ -40,8 +40,11 @@ async fn main() -> io::Result<()> {
     loop {
         let (mut stream, addr) = listener.accept().await.unwrap();
         let acceptor = acceptor.clone();
-        if let Err(_err) = process(&mut stream, acceptor).await {
-            println!("Shutdown from {:?}", addr);
+        if let Err(err) = process(&mut stream, acceptor).await {
+            println!("Error Shutdown from {:?}, err {:?}", addr, err);
+            stream.shutdown().await?;
+        } else {
+            println!("Shutdown from {:?} Successfully", addr);
             stream.shutdown().await?;
         }
     }
