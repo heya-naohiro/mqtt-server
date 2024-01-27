@@ -1,5 +1,5 @@
 [package]
-name = "mqtt"
+name = "mqttserver"
 version = "0.1.0"
 edition = "2021"
 
@@ -15,3 +15,6 @@ tokio-rustls = {version = "0.25.0"}
 rustls = { version = "0.22", default-features = false }
 pki-types = { package = "rustls-pki-types", version = "1" }
 rustls-pemfile = "2"
+
+[dev-dependencies]
+paho-mqtt = "0.12.3"
