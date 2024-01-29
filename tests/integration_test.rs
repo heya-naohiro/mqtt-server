@@ -1,12 +1,7 @@
 use futures::executor::block_on;
 use paho_mqtt as mqtt;
 
-use mqttserver;
-
-#[test]
-fn it_adds_two() {
-    assert_eq!(4, mqttserver::add_two(2));
-}
+//use mqttserver;
 
 #[tokio::test]
 async fn test_something_async() {
