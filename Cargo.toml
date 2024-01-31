@@ -18,3 +18,5 @@ rustls-pemfile = "2"
 
 [dev-dependencies]
 paho-mqtt = "0.12.3"
+assert_cmd = "2.0"
+predicates = "2.1"
