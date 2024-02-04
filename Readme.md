@@ -24,4 +24,5 @@ OPTIONS:
 
 ## Goal, not Goal
 Not aiming for now: Implementing broker features = Communication between devices other than the host, adding protocols other than MQTT.
+
 Future goals: Scaling out, performance measurement.
