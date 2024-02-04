@@ -6,11 +6,8 @@
 cargo build
 ```
 
-## run
+## option
 ```
-mqtt-server 0.0.0
-Naohiro Heya
-mqtt server
 
 USAGE:
     mqttserver [OPTIONS]
@@ -24,3 +21,7 @@ OPTIONS:
     -c, --cert <FILEPATH>    server cert @ pem format [default: server.crt]
     -k, --key <FILEPATH>     server cert @ pem format [default: private.key]
 ```
+
+## Goal, not Goal
+Not aiming for now: Implementing broker features = Communication between devices other than the host, adding protocols other than MQTT.
+Future goals: Scaling out, performance measurement.
