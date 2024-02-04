@@ -15,6 +15,7 @@ tokio-rustls = {version = "0.25.0"}
 rustls = { version = "0.22", default-features = false }
 pki-types = { package = "rustls-pki-types", version = "1" }
 rustls-pemfile = "2"
+clap = "2"
 
 [dev-dependencies]
 paho-mqtt = "0.12.3"
