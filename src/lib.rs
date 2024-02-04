@@ -78,7 +78,7 @@ pub fn get_args() -> ServerResult<Config> {
                 .short("k")
                 .long("--key")
                 .default_value("private.key")
-                .help("server cert @ pem format")
+                .help("server key @ pem format")
                 .takes_value(true),
         )
         .get_matches();
@@ -105,7 +105,7 @@ pub fn get_args() -> ServerResult<Config> {
 #[tokio::main]
 async fn run_main(config: Config) -> io::Result<()> {
     let acceptor = TlsAcceptor::from(Arc::new(config.serverconfig));
-    let listener = TcpListener::bind("127.0.0.1:7878").await.unwrap();
+    let listener = TcpListener::bind(config.address).await.unwrap();
     loop {
         let (mut stream, addr) = listener.accept().await.unwrap();
         let acceptor = acceptor.clone();
