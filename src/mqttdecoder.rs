@@ -9,6 +9,8 @@ pub enum MQTTPacket {
     Connack(Connack),
     Publish(Publish),
     Disconnect,
+    Subscribe(Subscribe),
+    Suback(Suback),
     _Other,
 }
 #[derive(Debug)]
@@ -17,6 +19,7 @@ pub enum MQTTPacketHeader {
     Disconnect,
     _Connack,
     Publish,
+    Subscribe,
     Other,
 }
 
@@ -45,6 +48,104 @@ impl Connack {
         buf.put_u8(length);
         buf.put_u8(flags);
         buf.put_u8(self.return_code);
+    }
+}
+
+#[derive(Debug)]
+pub struct Suback {
+    message_id: u16,
+    sublength: usize,
+}
+impl Suback {
+    // [TODO] all qos 0 now
+    pub fn new(message_id: u16, sublength: usize) -> Suback {
+        // [TODO] Implement actual operation and return code
+        Suback {
+            message_id,
+            sublength,
+        }
+    }
+
+    pub fn to_buf(&self, buf: &mut BytesMut) {
+        let header: u8 = 0b10010000;
+        let remain_length: usize = 2 /* id */+ self.sublength /* qos 1byte * sublen */; // [TODO] multi byte
+
+        buf.put_u8(header);
+        buf.put_u8(remain_length as u8);
+        buf.put_u8((self.message_id >> 8) as u8);
+        buf.put_u8(self.message_id as u8);
+        for _ in 1..=self.sublength {
+            // all qos 0 ([TODO] qos negotiation)
+            buf.put_u8(0);
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Subscribe {
+    pub message_id: u16,
+    pub subscription_list: Vec<SubscriptionInfo>,
+}
+
+#[derive(Debug)]
+pub struct SubscriptionInfo {
+    topicfilter: String,
+    qos: u8,
+}
+
+impl Subscribe {
+    pub fn from_byte(buf: &BytesMut) -> Result<Option<(Subscribe, usize)>, Error> {
+        if buf.len() < 2 {
+            return Ok(None);
+        }
+        println!("buf[1]: {:?} buf[0] {:?}", buf[1], buf[0]);
+        let message_id: u16 = (buf[1] as u16) + ((buf[0] as u16) << 8);
+        println!("message id === {:?}", message_id);
+        Ok(Some((
+            Subscribe {
+                message_id,
+                subscription_list: vec![],
+            },
+            2,
+        )))
+    }
+    pub fn payload_from_byte(&mut self, buf: &mut BytesMut, remain: usize) -> Result<usize, Error> {
+        // todo remain
+        let mut sub_counter: usize = 0;
+        loop {
+            let topiclength: usize =
+                buf[sub_counter + 1] as usize + ((buf[sub_counter] as usize) << 8);
+            sub_counter = sub_counter + 2;
+            let topicfilter = if let Ok(str) =
+                std::str::from_utf8(&buf[sub_counter..sub_counter + topiclength])
+            {
+                str.to_owned()
+            } else {
+                return Err(Error::new(ErrorKind::Other, "Invalid"));
+            };
+            sub_counter = sub_counter + topiclength;
+            println!("topic fileter {:?}", topicfilter);
+
+            let qos = match buf[sub_counter] {
+                0 => 0,
+                1 => 1,
+                2 => 2,
+                value @ _ => {
+                    println!("qos {:?}", value);
+                    return Err(Error::new(ErrorKind::Other, "Invalid qos "));
+                }
+            };
+            sub_counter = sub_counter + 1;
+            self.subscription_list
+                .push(SubscriptionInfo { topicfilter, qos });
+
+            // 異常系
+            if remain <= sub_counter {
+                break;
+            }
+        }
+
+        return Ok(sub_counter);
     }
 }
 
@@ -168,6 +269,7 @@ fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
             1 => MQTTPacketHeader::Connect,
             14 => MQTTPacketHeader::Disconnect,
             3 => MQTTPacketHeader::Publish,
+            8 => MQTTPacketHeader::Subscribe,
             _ => MQTTPacketHeader::Other,
         };
         return Ok(Some((
@@ -187,6 +289,7 @@ impl Decoder for MqttDecoder {
     type Item = MQTTPacket;
     type Error = std::io::Error;
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        println!("Decode top header ??? {:?}", self.header);
         match &self.header {
             None => {
                 let length = src.len();
@@ -220,6 +323,28 @@ impl Decoder for MqttDecoder {
                         self.reset();
                         Ok(Some(MQTTPacket::Disconnect))
                     }
+                    MQTTPacketHeader::Subscribe => {
+                        let (mut variable_header_only, readbyte) = match Subscribe::from_byte(src) {
+                            Ok(Some(value)) => value,
+                            Ok(None) => return Ok(None),
+                            Err(e) => return Err(e),
+                        };
+                        src.advance(readbyte);
+                        if self.realremaining_length < readbyte {
+                            return Err(Error::new(ErrorKind::Other, "Invalid byte size zbbb"));
+                        }
+                        self.realremaining_length = self.realremaining_length - readbyte;
+
+                        let readbyte = match variable_header_only
+                            .payload_from_byte(src, self.realremaining_length)
+                        {
+                            Ok(value) => value,
+                            Err(e) => return Err(e),
+                        };
+                        src.advance(readbyte);
+                        self.reset();
+                        Ok(Some(MQTTPacket::Subscribe(variable_header_only)))
+                    }
                     MQTTPacketHeader::Publish => {
                         // Decoderに格納する
                         //let remain_length = header.remaining_length;
@@ -248,6 +373,7 @@ impl Decoder for MqttDecoder {
                         self.header = Some(header);
                         // process publish packet
                         // 強制的に次のターンに持ち込みpaylodを処理する（残りが何byteであろうと)
+                        // 続きを処理しなければならない
                         println!("next!!!");
                         Ok(None)
                     }
@@ -260,13 +386,36 @@ impl Decoder for MqttDecoder {
             }
             // ここに来るということは、variable headerも読んだ状態、つまりpayloadの処理
             Some(header) => match header.mtype {
-                // [TODO] second packet implement
-                /*
-                _ => {
-                    let packet = self.packet.take();
-                    return Ok(packet);
-                } */
-                //
+                MQTTPacketHeader::Subscribe => match self.packet.take() {
+                    Some(MQTTPacket::Subscribe(mut subscribe)) => {
+                        println!("Here ?????????");
+                        let readbyte =
+                            match subscribe.payload_from_byte(src, self.realremaining_length) {
+                                Ok(value) => value,
+                                Err(_error) => {
+                                    return Err(Error::new(ErrorKind::Other, "Invalid"));
+                                }
+                            };
+                        if readbyte == 0 {
+                            return Ok(None);
+                        }
+                        src.advance(readbyte);
+                        self.realremaining_length = self.realremaining_length - readbyte;
+                        if self.realremaining_length > src.len() {
+                            Ok(None)
+                        } else {
+                            println!("Packet publish {:?}", subscribe.subscription_list);
+
+                            // reset for next
+                            self.reset();
+                            Ok(Some(MQTTPacket::Subscribe(subscribe)))
+                        }
+                    }
+                    _ => {
+                        println!("subscribe Second packet not implement {:?}", header.mtype);
+                        Err(Error::new(ErrorKind::Other, "Invalid"))
+                    }
+                },
                 MQTTPacketHeader::Publish => match self.packet.take() {
                     Some(MQTTPacket::Publish(mut publish)) => {
                         println!("HERE!!!!!111111");
@@ -326,6 +475,7 @@ impl Encoder<MQTTPacket> for MqttEncoder {
     fn encode(&mut self, packet: MQTTPacket, buf: &mut BytesMut) -> Result<(), Self::Error> {
         match packet {
             MQTTPacket::Connack(x) => x.to_buf(buf),
+            MQTTPacket::Suback(x) => x.to_buf(buf),
             _ => {}
         }
         return Ok(());

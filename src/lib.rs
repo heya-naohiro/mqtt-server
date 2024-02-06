@@ -180,6 +180,24 @@ async fn process(socket: &mut TcpStream, acceptor: TlsAcceptor) -> io::Result<()
                         // disconnect
                         break;
                     }
+                    mqttdecoder::MQTTPacket::Subscribe(packet) => {
+                        println!("Subscribe Packet {:?}", packet);
+                        let packet = mqttdecoder::Suback::new(
+                            packet.message_id,
+                            packet.subscription_list.len(),
+                        );
+                        let result = frame_writer
+                            .send(mqttdecoder::MQTTPacket::Suback(packet))
+                            .await;
+                        match result {
+                            Ok(_) => {
+                                println!("Success Suback")
+                            }
+                            Err(err) => {
+                                eprintln!("Error Suback {:?}", err)
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
