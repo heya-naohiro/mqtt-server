@@ -20,7 +20,11 @@ jobs:
       run: cargo build --verbose
     - name: Save test private key file from secrets
       run: envsubst < private.key.envsubst.txt > private.key
+      env:
+        TEST_PRIVATE_SERVER_KEY: ${{ secrets.TEST_PRIVATE_SERVER_KEY }}
     - name: Save test cert file from secrets
       run: envsubst < server.crt.envsubst.txt > server.crt
+      env:
+        TEST_SERVER_CERT: ${{ secrets.TEST_SERVER_CERT }}
     - name: Run tests
       run: cargo test --verbose
