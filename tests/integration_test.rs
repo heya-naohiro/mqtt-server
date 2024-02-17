@@ -3,7 +3,7 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration};
+//use tokio::time::{sleep, Duration};
 
 #[tokio::test]
 async fn test_connect_and_publish() {
@@ -29,7 +29,12 @@ async fn test_connect_and_publish() {
         .max_buffered_messages(100)
         .create_client()
         .unwrap();
-    let ssl_opts = mqtt::SslOptionsBuilder::new().verify(false).finalize();
+    const TRUST_STORE: &str = "server.crt";
+    let ssl_opts = mqtt::SslOptionsBuilder::new()
+        .verify(false)
+        .trust_store(TRUST_STORE)
+        .unwrap()
+        .finalize();
     let conn_opts = mqtt::ConnectOptionsBuilder::new()
         .ssl_options(ssl_opts)
         .finalize();
