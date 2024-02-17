@@ -13,6 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
 
 //use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -26,15 +27,15 @@ type ServerResult<T> = Result<T, Box<dyn Error>>;
 
 #[derive(Debug)]
 pub struct Config {
-    serverconfig: ServerConfig,
-    address: SocketAddr,
+    pub serverconfig: ServerConfig,
+    pub address: SocketAddr,
 }
 
-fn load_certs(path: &Path) -> io::Result<Vec<CertificateDer<'static>>> {
+pub fn load_certs(path: &Path) -> io::Result<Vec<CertificateDer<'static>>> {
     certs(&mut BufReader::new(File::open(path)?)).collect()
 }
 
-fn load_keys(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
+pub fn load_keys(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
     rsa_private_keys(&mut BufReader::new(File::open(path)?))
         .next()
         .unwrap()
@@ -42,7 +43,8 @@ fn load_keys(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
 }
 
 pub fn run(config: Config) -> ServerResult<()> {
-    if let Err(err) = run_main(config) {
+    // not use now, for test only
+    if let Err(err) = start_main(config) {
         return Err(Box::new(err));
     };
     Ok(())
@@ -102,8 +104,7 @@ pub fn get_args() -> ServerResult<Config> {
     })
 }
 
-#[tokio::main]
-async fn run_main(config: Config) -> io::Result<()> {
+async fn handle_connection(config: Config) {
     let acceptor = TlsAcceptor::from(Arc::new(config.serverconfig));
     let listener = TcpListener::bind(config.address).await.unwrap();
     loop {
@@ -117,12 +118,22 @@ async fn run_main(config: Config) -> io::Result<()> {
     }
 }
 
-pub fn add_two(a: i32) -> i32 {
-    internal_adder(a, 2)
+#[tokio::main]
+async fn start_main(config: Config) -> io::Result<()> {
+    let (_, receiver) = mpsc::channel::<bool>(1);
+    let _ = tokio::spawn(run_main(config, receiver)).await;
+    Ok(())
 }
 
-fn internal_adder(a: i32, b: i32) -> i32 {
-    a + b
+pub async fn run_main(config: Config, mut receiver: mpsc::Receiver<bool>) -> io::Result<()> {
+    tokio::select! {
+        _ = receiver.recv() => {
+            println!("Recieve Stop Signal")
+        },
+        _ = handle_connection(config) => {
+        },
+    }
+    return Ok(());
 }
 
 async fn process_connection(socket: &mut TcpStream, acceptor: TlsAcceptor) -> io::Result<()> {
