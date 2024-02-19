@@ -16,6 +16,8 @@ rustls = { version = "0.22", default-features = false }
 pki-types = { package = "rustls-pki-types", version = "1" }
 rustls-pemfile = "2"
 clap = "2"
+cdrs-tokio = "6.0.0"
+chrono = "0.4.34"
 
 [dev-dependencies]
 paho-mqtt = "0.12.3"

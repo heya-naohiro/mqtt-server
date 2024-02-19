@@ -10,10 +10,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  setup:
+    name: Setup
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@main
 
+  build_and_test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    services:
+      cassandra:
+        image: cassandra:4.1.0
+        env:
+          CASSANDRA_USER: testuser
+          CASSANDRA_PASSWORD: testpass
+        ports:
+          - 9044:9042
     steps:
     - uses: actions/checkout@v3
     - name: Build

@@ -16,3 +16,4 @@ Cargo.lock
 # key/crt for testing
 private.key
 server.crt
+server.csr

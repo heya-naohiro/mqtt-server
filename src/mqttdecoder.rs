@@ -151,10 +151,10 @@ impl Subscribe {
 
 #[derive(Debug, Clone)] // Cloneを追加
 pub struct Publish {
-    topic_name: String,
-    message_id: u32,
+    pub topic_name: String,
+    pub message_id: u32,
     // まずは小さいサイズ想定ですべてVec<u8>にコピーする
-    payload: Vec<u8>,
+    pub payload: Vec<u8>,
 }
 
 impl Publish {

@@ -1,0 +1,19 @@
+version: '3.8'
+services:
+  cassandra:
+    image: cassandra:4.1.0
+    ports:
+      - 9044:9042
+    environment:
+      - CASSANDRA_USER=user
+      - CASSANDRA_PASSWORD=pass
+      - MAX_HEAP_SIZE=256M
+      - HEAP_NEWSIZE=128M
+    container_name: cassandra
+    restart: always
+    volumes:
+      - cassandra-database:/var/lib/cassandra
+
+volumes:
+  cassandra-database:
+  
