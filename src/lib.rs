@@ -104,7 +104,7 @@ pub fn get_args() -> ServerResult<Config> {
                 .value_name("CASSANDRA IPADDR")
                 .short("db_addr")
                 .long("--db_addr")
-                .default_value("127.0.0.1:9044")
+                .default_value("127.0.0.1:9042")
                 .required(false)
                 .help("server's address consist of port")
                 .takes_value(true),
