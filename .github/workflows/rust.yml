@@ -24,6 +24,7 @@ jobs:
         image: cassandra:4.1.0
         ports:
           - 9044:9042
+        options: --health-cmd 'cqlsh -e "USE system"' --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
     - uses: actions/checkout@v3
     - name: Build

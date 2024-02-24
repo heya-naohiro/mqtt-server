@@ -274,7 +274,7 @@ async fn process(
                         )
                         .await
                         {
-                            eprintln!("Error DB Store Error {:?}", err);
+                            eprintln!("Error DB Store Error {:?}", err)
                         }
                     }
                     mqttdecoder::MQTTPacket::Disconnect => {
