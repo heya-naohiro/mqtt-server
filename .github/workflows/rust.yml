@@ -40,4 +40,4 @@ jobs:
       env:
         TEST_SERVER_CERT: ${{ secrets.TEST_SERVER_CERT }}
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test -- --nocapture
