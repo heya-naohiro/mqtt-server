@@ -1,7 +1,12 @@
+mod cassandra_store;
 mod mqttdecoder;
+
 use std::fs::File;
 use std::io::{self, BufReader};
 //use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use cdrs_tokio::cluster::session::{Session, SessionBuilder, TcpSessionBuilder};
+use cdrs_tokio::load_balancing::RoundRobinLoadBalancingStrategy;
+use cdrs_tokio::transport::TransportTcp;
 use clap::{App, Arg};
 use futures::stream::StreamExt;
 use futures::SinkExt;
@@ -13,7 +18,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tokio_rustls::TlsAcceptor;
 
 //use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -23,12 +28,23 @@ use tokio::io::split;
 use tokio::net::TcpStream;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
+use cdrs_tokio::authenticators::NoneAuthenticatorProvider;
+use cdrs_tokio::cluster::topology::Node;
+use cdrs_tokio::cluster::NodeAddress;
+use cdrs_tokio::cluster::{NodeTcpConfigBuilder, TcpConnectionManager};
+
 type ServerResult<T> = Result<T, Box<dyn Error>>;
 
+type CurrentSession = Session<
+    TransportTcp,
+    TcpConnectionManager,
+    RoundRobinLoadBalancingStrategy<TransportTcp, TcpConnectionManager>,
+>;
 #[derive(Debug)]
 pub struct Config {
     pub serverconfig: ServerConfig,
     pub address: SocketAddr,
+    pub cassandra_addr: String,
 }
 
 pub fn load_certs(path: &Path) -> io::Result<Vec<CertificateDer<'static>>> {
@@ -83,6 +99,16 @@ pub fn get_args() -> ServerResult<Config> {
                 .help("server key @ pem format")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("cassandra_addr")
+                .value_name("CASSANDRA IPADDR")
+                .short("db_addr")
+                .long("--db_addr")
+                .default_value("127.0.0.1:9042")
+                .required(false)
+                .help("server's address consist of port")
+                .takes_value(true),
+        )
         .get_matches();
 
     let certs = load_certs(Path::new(matches.value_of("cert").unwrap()))?;
@@ -98,19 +124,26 @@ pub fn get_args() -> ServerResult<Config> {
     } else {
         return Err(format!("address error, invalid format {}", addr).into());
     };
+
+    let cassandra_addr = matches.value_of("cassandra_addr").unwrap();
+    let cassandra_addr = cassandra_addr;
+
     Ok(Config {
         serverconfig: config,
         address: addr,
+        cassandra_addr: cassandra_addr.to_string(),
     })
 }
 
-async fn handle_connection(config: Config) {
-    let acceptor = TlsAcceptor::from(Arc::new(config.serverconfig));
+async fn handle_connection(config: Arc<Config>) {
+    let server_config = config.serverconfig.clone();
+    let acceptor = TlsAcceptor::from(Arc::new(server_config));
     let listener = TcpListener::bind(config.address).await.unwrap();
+    println!("handle connection");
     loop {
         let (mut stream, addr) = listener.accept().await.unwrap();
         let acceptor = acceptor.clone();
-        if let Err(err) = process_connection(&mut stream, acceptor).await {
+        if let Err(err) = process_connection(&mut stream, acceptor, config.clone()).await {
             println!("Error process from {:?}, err {:?}", addr, err);
         } else {
             println!("Shutdown process from {:?} Successfully", addr);
@@ -120,24 +153,54 @@ async fn handle_connection(config: Config) {
 
 #[tokio::main]
 async fn start_main(config: Config) -> io::Result<()> {
-    let (_, receiver) = mpsc::channel::<bool>(1);
+    let (mut sender, receiver) = oneshot::channel::<bool>();
     let _ = tokio::spawn(run_main(config, receiver)).await;
+    sender.closed().await;
     Ok(())
 }
 
-pub async fn run_main(config: Config, mut receiver: mpsc::Receiver<bool>) -> io::Result<()> {
+pub async fn run_main(config: Config, receiver: oneshot::Receiver<bool>) -> io::Result<()> {
+    let cluster_config = NodeTcpConfigBuilder::new()
+        .with_contact_point(config.cassandra_addr.clone().into())
+        .with_authenticator_provider(Arc::new(NoneAuthenticatorProvider))
+        .build()
+        .await
+        .unwrap();
+
+    let lb = RoundRobinLoadBalancingStrategy::new();
+    let session: Arc<cassandra_store::CurrentSession> =
+        Arc::new(TcpSessionBuilder::new(lb, cluster_config).build());
+    let _ = match cassandra_store::CassandraStore::initialize(session).await {
+        Ok(value) => value,
+        Err(e) => {
+            println!("Cassandra Error {:?}", e);
+        }
+    };
+    let c = Arc::new(config);
+    let c_clone = Arc::clone(&c);
     tokio::select! {
-        _ = receiver.recv() => {
-            println!("Recieve Stop Signal")
+        d = receiver => {
+            match d {
+                Ok(_) => {
+                    println!("Recieve Stop Signal {:?}", d)
+                }
+                Err(err) => {
+                    println!("Recieve Stop Signal {:?}", err)
+                }
+            }
         },
-        _ = handle_connection(config) => {
+        _ = handle_connection(c_clone) => {
         },
     }
     return Ok(());
 }
 
-async fn process_connection(socket: &mut TcpStream, acceptor: TlsAcceptor) -> io::Result<()> {
-    if let Err(err) = process(socket, acceptor).await {
+async fn process_connection(
+    socket: &mut TcpStream,
+    acceptor: TlsAcceptor,
+    config: Arc<Config>,
+) -> io::Result<()> {
+    if let Err(err) = process(socket, acceptor, config).await {
         println!("Error process from err {:?}", err);
         socket.shutdown().await?;
         return Err(err);
@@ -149,13 +212,31 @@ async fn process_connection(socket: &mut TcpStream, acceptor: TlsAcceptor) -> io
     return Ok(());
 }
 
-async fn process(socket: &mut TcpStream, acceptor: TlsAcceptor) -> io::Result<()> {
+async fn process(
+    socket: &mut TcpStream,
+    acceptor: TlsAcceptor,
+    config: Arc<Config>,
+) -> io::Result<()> {
     let mut socket = match acceptor.accept(socket).await {
         Ok(value) => value,
         Err(error) => {
             return Err(error);
         }
     };
+    /*
+       DB Connection
+    */
+    /* Create Session */
+    let cluster_config = NodeTcpConfigBuilder::new()
+        .with_contact_point(config.cassandra_addr.clone().into())
+        .with_authenticator_provider(Arc::new(NoneAuthenticatorProvider))
+        .build()
+        .await
+        .unwrap();
+
+    let lb = RoundRobinLoadBalancingStrategy::new();
+    let session: Arc<cassandra_store::CurrentSession> =
+        Arc::new(TcpSessionBuilder::new(lb, cluster_config).build());
 
     let stream = &mut socket;
     let (rd, wr) = split(stream);
@@ -186,6 +267,15 @@ async fn process(socket: &mut TcpStream, acceptor: TlsAcceptor) -> io::Result<()
                     }
                     mqttdecoder::MQTTPacket::Publish(packet) => {
                         println!("Publish Packet {:?}", packet);
+                        // [TODO] Data path
+                        if let Err(err) = cassandra_store::CassandraStore::store_published_data(
+                            session.clone(),
+                            packet,
+                        )
+                        .await
+                        {
+                            eprintln!("Error DB Store Error {:?}", err)
+                        }
                     }
                     mqttdecoder::MQTTPacket::Disconnect => {
                         // disconnect
