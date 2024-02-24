@@ -22,9 +22,6 @@ jobs:
     services:
       cassandra:
         image: cassandra:4.1.0
-        env:
-          CASSANDRA_USER: testuser
-          CASSANDRA_PASSWORD: testpass
         ports:
           - 9044:9042
     steps:
