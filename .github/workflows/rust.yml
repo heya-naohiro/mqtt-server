@@ -29,13 +29,13 @@ jobs:
     - uses: actions/checkout@v3
     - name: Build
       run: cargo build --verbose
-    - name: Save test private key file from secrets
+    - name: Prepare / Save test private key file from secrets
       run: envsubst < private.key.envsubst.txt > private.key
       env:
         TEST_PRIVATE_SERVER_KEY: ${{ secrets.TEST_PRIVATE_SERVER_KEY }}
-    - name: Save test cert file from secrets
+    - name: Test / Save test cert file from secrets
       run: envsubst < server.crt.envsubst.txt > server.crt
       env:
         TEST_SERVER_CERT: ${{ secrets.TEST_SERVER_CERT }}
-    - name: Run tests
+    - name: Test / Run tests
       run: cargo test -- --nocapture
