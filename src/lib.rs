@@ -135,7 +135,11 @@ pub fn get_args() -> ServerResult<Config> {
     })
 }
 
-async fn handle_connection(config: Arc<Config>) {
+async fn handle_user_connection() {
+    
+}
+
+async fn handle_device_connection(config: Arc<Config>) {
     let server_config = config.serverconfig.clone();
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
     let listener = TcpListener::bind(config.address).await.unwrap();
@@ -189,11 +193,15 @@ pub async fn run_main(config: Config, receiver: oneshot::Receiver<bool>) -> io::
                 }
             }
         },
-        _ = handle_connection(c_clone) => {
+        _ = handle_device_connection(c_clone) => {
+        },
+        _ = handle_user_connection() => {
+
         },
     }
     return Ok(());
 }
+
 
 async fn process_connection(
     socket: &mut TcpStream,
