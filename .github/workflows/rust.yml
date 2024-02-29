@@ -17,7 +17,6 @@ jobs:
       - uses: actions/checkout@main
       - name: protobuf install
         run: |
-          apt update && apt upgrade -y
           apt install -y protobuf-compiler libprotobuf-dev
 
   build_and_test:
