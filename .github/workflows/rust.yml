@@ -10,12 +10,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  setup:
-    name: Setup
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@main
-
   build_and_test:
     name: Build and Test
     runs-on: ubuntu-latest
@@ -27,8 +21,11 @@ jobs:
         options: --health-cmd "cqlsh --debug" --health-interval 5s --health-retries 100
     steps:
     - uses: actions/checkout@v3
+    - name: protobuf install
+      run: |
+        sudo apt-get install -y protobuf-compiler libprotobuf-dev
     - name: Build
-      run: cargo build --verbose
+      run: cargo build
     - name: Prepare / Save test private key file from secrets
       run: envsubst < private.key.envsubst.txt > private.key
       env:

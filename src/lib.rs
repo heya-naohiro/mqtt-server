@@ -1,9 +1,11 @@
 mod cassandra_store;
 mod mqttdecoder;
+mod rpcserver;
 
 use std::fs::File;
 use std::io::{self, BufReader};
 //use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use async_channel::Receiver;
 use cdrs_tokio::cluster::session::{Session, SessionBuilder, TcpSessionBuilder};
 use cdrs_tokio::load_balancing::RoundRobinLoadBalancingStrategy;
 use cdrs_tokio::transport::TransportTcp;
@@ -11,6 +13,7 @@ use clap::{App, Arg};
 use futures::stream::StreamExt;
 use futures::SinkExt;
 use pki_types::{CertificateDer, PrivateKeyDer};
+use rpcserver::rpcserver::PublishedPacket;
 use rustls::ServerConfig;
 use rustls_pemfile::{certs, rsa_private_keys};
 use std::net::SocketAddr;
@@ -20,18 +23,18 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio_rustls::TlsAcceptor;
-
+use tonic::transport::Server;
 //use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-use std::error::Error;
-use tokio::io::split;
-use tokio::net::TcpStream;
-use tokio_util::codec::{FramedRead, FramedWrite};
+use crate::rpcserver::rpcserver::published_packet_service_server::PublishedPacketServiceServer;
 
 use cdrs_tokio::authenticators::NoneAuthenticatorProvider;
 use cdrs_tokio::cluster::topology::Node;
 use cdrs_tokio::cluster::NodeAddress;
 use cdrs_tokio::cluster::{NodeTcpConfigBuilder, TcpConnectionManager};
+use std::error::Error;
+use tokio::io::split;
+use tokio::net::TcpStream;
+use tokio_util::codec::{FramedRead, FramedWrite};
 
 type ServerResult<T> = Result<T, Box<dyn Error>>;
 
@@ -135,7 +138,15 @@ pub fn get_args() -> ServerResult<Config> {
     })
 }
 
-async fn handle_connection(config: Arc<Config>) {
+async fn handle_user_connection(rx: Arc<Receiver<PublishedPacket>>) {
+    let addr = "[::1]:10000".parse().unwrap();
+    let publish_packet_service = rpcserver::PlatformPublishedPacketService { packet_channel: rx };
+    let svc = PublishedPacketServiceServer::new(publish_packet_service);
+
+    let _ = Server::builder().add_service(svc).serve(addr).await;
+}
+
+async fn handle_device_connection(config: Arc<Config>) {
     let server_config = config.serverconfig.clone();
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
     let listener = TcpListener::bind(config.address).await.unwrap();
@@ -178,6 +189,9 @@ pub async fn run_main(config: Config, receiver: oneshot::Receiver<bool>) -> io::
     };
     let c = Arc::new(config);
     let c_clone = Arc::clone(&c);
+
+    let (s, r) = async_channel::unbounded();
+    let rgrpc = Arc::new(r.clone());
     tokio::select! {
         d = receiver => {
             match d {
@@ -189,7 +203,10 @@ pub async fn run_main(config: Config, receiver: oneshot::Receiver<bool>) -> io::
                 }
             }
         },
-        _ = handle_connection(c_clone) => {
+        _ = handle_device_connection(c_clone) => {
+        },
+        _ = handle_user_connection(rgrpc) => {
+
         },
     }
     return Ok(());

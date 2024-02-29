@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package rpcserver;
+
+message PublishedPacket {
+    string device_id = 1;
+    string topic = 2;
+    bytes payload = 3;
+}
+
+message PublishedPacketRequest {
+    string device_id = 1;
+}
+
+service PublishedPacketService {
+    rpc StreamPublishedPayload(PublishedPacketRequest) returns (stream PublishedPacket) {}
+}
