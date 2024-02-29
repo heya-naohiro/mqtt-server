@@ -15,9 +15,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@main
-      - name: protobuf install
-        run: |
-          sudo apt-get install -y protobuf-compiler libprotobuf-dev
 
   build_and_test:
     name: Build and Test
@@ -30,6 +27,9 @@ jobs:
         options: --health-cmd "cqlsh --debug" --health-interval 5s --health-retries 100
     steps:
     - uses: actions/checkout@v3
+    - name: protobuf install
+      run: |
+        sudo apt-get install -y protobuf-compiler libprotobuf-dev
     - name: Build
       run: cargo build
     - name: Prepare / Save test private key file from secrets
