@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package mqttserver;
+package rpcserver;
 
 message PublishedPacket {
     string device_id = 1;

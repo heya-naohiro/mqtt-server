@@ -21,6 +21,7 @@ chrono = "0.4.34"
 tonic = "0.11"
 prost = "0.12"
 tokio-stream = "0.1"
+async-channel = "2"
 
 [dev-dependencies]
 paho-mqtt = "0.12.3"
@@ -28,4 +29,4 @@ assert_cmd = "2.0"
 predicates = "2.1"
 
 [build-dependencies]
-tonic-build = "0.4"
+tonic-build = "0.11"
