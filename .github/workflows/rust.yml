@@ -10,12 +10,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  setup:
-    name: Setup
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@main
-
   build_and_test:
     name: Build and Test
     runs-on: ubuntu-latest
