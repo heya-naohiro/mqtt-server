@@ -10,7 +10,7 @@ use std::error::Error;
 use std::os::unix::net::SocketAddr;
 use std::sync::Arc;
 
-use crate::mqttdecoder;
+use crate::mqttcoder;
 
 pub type CurrentSession = Session<
     TransportTcp,
@@ -45,7 +45,7 @@ impl CassandraStore {
 
     pub async fn store_published_data(
         session: Arc<CurrentSession>,
-        packet: mqttdecoder::Publish,
+        packet: mqttcoder::Publish,
     ) -> CassandraResult<()> {
         let update_struct_cql = "UPDATE retain_kv.device_data \
             SET payload = ?, updatetime = ? WHERE device_id = ? AND topic = ?;";
