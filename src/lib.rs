@@ -1,5 +1,5 @@
 mod cassandra_store;
-mod mqttdecoder;
+mod mqttcoder;
 mod rpcserver;
 
 use std::fs::File;
@@ -258,20 +258,20 @@ async fn process(
     let stream = &mut socket;
     let (rd, wr) = split(stream);
 
-    let decoder = mqttdecoder::MqttDecoder::new();
+    let decoder = mqttcoder::MqttDecoder::new();
     let mut frame_reader = FramedRead::new(rd, decoder);
-    let encoder = mqttdecoder::MqttEncoder::new();
+    let encoder = mqttcoder::MqttEncoder::new();
     let mut frame_writer = FramedWrite::new(wr, encoder);
     while let Some(frame) = frame_reader.next().await {
         match frame {
             Ok(data) => {
                 println!("received: {:?}", data);
                 match data {
-                    mqttdecoder::MQTTPacket::Connect => {
+                    mqttcoder::MQTTPacket::Connect => {
                         println!("Connect");
-                        let packet = mqttdecoder::Connack::new();
+                        let packet = mqttcoder::Connack::new();
                         let result = frame_writer
-                            .send(mqttdecoder::MQTTPacket::Connack(packet))
+                            .send(mqttcoder::MQTTPacket::Connack(packet))
                             .await;
                         match result {
                             Ok(_) => {
@@ -282,7 +282,7 @@ async fn process(
                             }
                         }
                     }
-                    mqttdecoder::MQTTPacket::Publish(packet) => {
+                    mqttcoder::MQTTPacket::Publish(packet) => {
                         println!("Publish Packet {:?}", packet);
                         // [TODO] Data path
                         if let Err(err) = cassandra_store::CassandraStore::store_published_data(
@@ -294,18 +294,18 @@ async fn process(
                             eprintln!("Error DB Store Error {:?}", err)
                         }
                     }
-                    mqttdecoder::MQTTPacket::Disconnect => {
+                    mqttcoder::MQTTPacket::Disconnect => {
                         // disconnect
                         break;
                     }
-                    mqttdecoder::MQTTPacket::Subscribe(packet) => {
+                    mqttcoder::MQTTPacket::Subscribe(packet) => {
                         println!("Subscribe Packet {:?}", packet);
-                        let packet = mqttdecoder::Suback::new(
+                        let packet = mqttcoder::Suback::new(
                             packet.message_id,
                             packet.subscription_list.len(),
                         );
                         let result = frame_writer
-                            .send(mqttdecoder::MQTTPacket::Suback(packet))
+                            .send(mqttcoder::MQTTPacket::Suback(packet))
                             .await;
                         match result {
                             Ok(_) => {
