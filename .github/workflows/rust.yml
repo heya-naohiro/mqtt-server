@@ -34,5 +34,7 @@ jobs:
       run: envsubst < server.crt.envsubst.txt > server.crt
       env:
         TEST_SERVER_CERT: ${{ secrets.TEST_SERVER_CERT }}
-    - name: Test / Run tests
-      run: cargo test -- --nocapture --test-threads=1
+    - name: Test / Run lib unit tests
+      run: cargo test --lib -- --nocapture
+    - name: Test / Run integration tests
+      run: cargo test --test '*' -- --nocapture --test-threads=1
