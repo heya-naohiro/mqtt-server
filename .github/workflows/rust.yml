@@ -35,4 +35,4 @@ jobs:
       env:
         TEST_SERVER_CERT: ${{ secrets.TEST_SERVER_CERT }}
     - name: Test / Run tests
-      run: cargo test -- --nocapture
+      run: cargo test -- --nocapture --test-threads=1
