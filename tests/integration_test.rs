@@ -1,11 +1,19 @@
 use paho_mqtt as mqtt;
 use std::io;
+use std::net::TcpListener;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use tokio::sync::oneshot;
-//use tokio::time::{sleep, Duration};
 
-fn get_test_config() -> mqttserver::Config {
+/* */
+fn available_port() -> io::Result<u16> {
+    match TcpListener::bind("localhost:0") {
+        Ok(listener) => Ok(listener.local_addr().unwrap().port()),
+        Err(e) => Err(e),
+    }
+}
+
+fn get_test_config(port: u16) -> mqttserver::Config {
     let certs = mqttserver::load_certs(Path::new("server.crt")).unwrap();
     let key = mqttserver::load_keys(Path::new("private.key")).unwrap();
     let config = rustls::ServerConfig::builder()
@@ -13,7 +21,7 @@ fn get_test_config() -> mqttserver::Config {
         .with_single_cert(certs, key)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
         .unwrap();
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8883);
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
 
     let cassandraaddr = "127.0.0.1:9042".to_string();
 
@@ -40,14 +48,16 @@ fn get_test_mqtt_connectopt() -> mqtt::ConnectOptions {
 
 #[tokio::test]
 async fn test_connect_and_publish() {
-    let config = get_test_config();
+    let use_port = available_port().unwrap();
+    let config = get_test_config(use_port);
     let (sender, receiver) = oneshot::channel::<bool>();
     let task = tokio::spawn(mqttserver::run_main(config, receiver));
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
     let conn_opts = get_test_mqtt_connectopt();
+
     let cli = mqtt::CreateOptionsBuilder::new()
-        .server_uri("ssl://localhost:8883")
+        .server_uri(format!("{}:{}", "ssl://localhost", use_port))
         .client_id("test_client_id")
         .max_buffered_messages(100)
         .create_client()
@@ -85,14 +95,16 @@ async fn test_connect_and_publish() {
 
 #[tokio::test]
 async fn test_publish_and_datarecieve() {
-    let config = get_test_config();
+    let use_port = available_port().unwrap();
+    let config = get_test_config(use_port);
     let (sender, receiver) = oneshot::channel::<bool>();
     let task = tokio::spawn(mqttserver::run_main(config, receiver));
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
     let conn_opts = get_test_mqtt_connectopt();
+
     let cli = mqtt::CreateOptionsBuilder::new()
-        .server_uri("ssl://localhost:8883")
+        .server_uri(format!("{}:{}", "ssl://localhost", use_port))
         .client_id("test_client_id")
         .max_buffered_messages(100)
         .create_client()
@@ -103,8 +115,6 @@ async fn test_publish_and_datarecieve() {
         "Expected Connect Result to be Ok, but got Err: {:?}",
         ret.err()
     );
-
-    // recieve grpc
 
     let msg = mqtt::MessageBuilder::new()
         .topic("test")
