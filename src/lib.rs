@@ -5,13 +5,13 @@ mod rpcserver;
 use std::fs::File;
 use std::io::{self, BufReader};
 //use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use async_channel::Receiver;
 use cdrs_tokio::cluster::session::{Session, SessionBuilder, TcpSessionBuilder};
 use cdrs_tokio::load_balancing::RoundRobinLoadBalancingStrategy;
 use cdrs_tokio::transport::TransportTcp;
 use clap::{App, Arg};
 use futures::stream::StreamExt;
 use futures::SinkExt;
+use mqttcoder::MQTTPacket;
 use pki_types::{CertificateDer, PrivateKeyDer};
 use rpcserver::rpcserver::PublishedPacket;
 use rustls::ServerConfig;
@@ -21,11 +21,13 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio_rustls::TlsAcceptor;
 use tonic::transport::Server;
 //use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::rpcserver::rpcserver::published_packet_service_server::PublishedPacketServiceServer;
+use tokio::sync::broadcast;
 
 use cdrs_tokio::authenticators::NoneAuthenticatorProvider;
 use cdrs_tokio::cluster::topology::Node;
@@ -43,6 +45,8 @@ type CurrentSession = Session<
     TcpConnectionManager,
     RoundRobinLoadBalancingStrategy<TransportTcp, TcpConnectionManager>,
 >;
+use tokio_stream::StreamMap;
+
 #[derive(Debug)]
 pub struct Config {
     pub serverconfig: ServerConfig,
@@ -138,15 +142,15 @@ pub fn get_args() -> ServerResult<Config> {
     })
 }
 
-async fn handle_user_connection(rx: Arc<Receiver<PublishedPacket>>) {
+async fn handle_user_connection(reciever: broadcast::Receiver<PublishedPacket>) {
     let addr = "[::1]:10000".parse().unwrap();
-    let publish_packet_service = rpcserver::PlatformPublishedPacketService { packet_channel: rx };
+    let publish_packet_service = rpcserver::PlatformPublishedPacketService::new(reciever);
     let svc = PublishedPacketServiceServer::new(publish_packet_service);
 
     let _ = Server::builder().add_service(svc).serve(addr).await;
 }
 
-async fn handle_device_connection(config: Arc<Config>) {
+async fn handle_device_connection(config: Arc<Config>, sender: broadcast::Sender<PublishedPacket>) {
     let server_config = config.serverconfig.clone();
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
     let listener = TcpListener::bind(config.address).await.unwrap();
@@ -154,7 +158,9 @@ async fn handle_device_connection(config: Arc<Config>) {
     loop {
         let (mut stream, addr) = listener.accept().await.unwrap();
         let acceptor = acceptor.clone();
-        if let Err(err) = process_connection(&mut stream, acceptor, config.clone()).await {
+        if let Err(err) =
+            process_connection(&mut stream, acceptor, config.clone(), sender.clone()).await
+        {
             println!("Error process from {:?}, err {:?}", addr, err);
         } else {
             println!("Shutdown process from {:?} Successfully", addr);
@@ -171,12 +177,15 @@ async fn start_main(config: Config) -> io::Result<()> {
 }
 
 pub async fn run_main(config: Config, receiver: oneshot::Receiver<bool>) -> io::Result<()> {
+    println!("Run main");
+
     let cluster_config = NodeTcpConfigBuilder::new()
         .with_contact_point(config.cassandra_addr.clone().into())
         .with_authenticator_provider(Arc::new(NoneAuthenticatorProvider))
         .build()
         .await
         .unwrap();
+    println!("Run main 2");
 
     let lb = RoundRobinLoadBalancingStrategy::new();
     let session: Arc<cassandra_store::CurrentSession> =
@@ -189,9 +198,10 @@ pub async fn run_main(config: Config, receiver: oneshot::Receiver<bool>) -> io::
     };
     let c = Arc::new(config);
     let c_clone = Arc::clone(&c);
+    println!("Run main3");
 
-    let (s, r) = async_channel::unbounded();
-    let rgrpc = Arc::new(r.clone());
+    // mqttとgRPCをつなぐ
+    let (s, r) = broadcast::channel::<PublishedPacket>(10);
     tokio::select! {
         d = receiver => {
             match d {
@@ -203,9 +213,9 @@ pub async fn run_main(config: Config, receiver: oneshot::Receiver<bool>) -> io::
                 }
             }
         },
-        _ = handle_device_connection(c_clone) => {
+        _ = handle_device_connection(c_clone, s) => {
         },
-        _ = handle_user_connection(rgrpc) => {
+        _ = handle_user_connection(r) => {
 
         },
     }
@@ -216,8 +226,9 @@ async fn process_connection(
     socket: &mut TcpStream,
     acceptor: TlsAcceptor,
     config: Arc<Config>,
+    sender: broadcast::Sender<PublishedPacket>,
 ) -> io::Result<()> {
-    if let Err(err) = process(socket, acceptor, config).await {
+    if let Err(err) = process(socket, acceptor, config, sender).await {
         println!("Error process from err {:?}", err);
         socket.shutdown().await?;
         return Err(err);
@@ -233,6 +244,7 @@ async fn process(
     socket: &mut TcpStream,
     acceptor: TlsAcceptor,
     config: Arc<Config>,
+    sender: broadcast::Sender<PublishedPacket>,
 ) -> io::Result<()> {
     let mut socket = match acceptor.accept(socket).await {
         Ok(value) => value,
@@ -287,11 +299,22 @@ async fn process(
                         // [TODO] Data path
                         if let Err(err) = cassandra_store::CassandraStore::store_published_data(
                             session.clone(),
-                            packet,
+                            packet.clone(),
                         )
                         .await
                         {
                             eprintln!("Error DB Store Error {:?}", err)
+                        }
+                        let send_packet = PublishedPacket {
+                            device_id: "device".to_string(),
+                            topic: packet.topic_name,
+                            payload: packet.payload,
+                        };
+                        println!("packet SEND!!!!!!!!!!!");
+                        let result = sender.send(send_packet);
+                        match result {
+                            Err(err) => eprintln!("Packet broadcast Error {}", err),
+                            Ok(size) => println!("Packet broadcast OK {}", size),
                         }
                     }
                     mqttcoder::MQTTPacket::Disconnect => {

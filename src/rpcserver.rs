@@ -1,8 +1,9 @@
 use crate::rpcserver::rpcserver::published_packet_service_server::PublishedPacketService;
-use async_channel::Receiver;
 use rpcserver::{PublishedPacket, PublishedPacketRequest};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use tokio::sync::broadcast;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex as TokioMutex;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tonic::{Request, Response, Status};
 
@@ -10,9 +11,19 @@ pub mod rpcserver {
     tonic::include_proto!("rpcserver");
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PlatformPublishedPacketService {
-    pub packet_channel: Arc<Receiver<PublishedPacket>>,
+    pub reciever: Arc<TokioMutex<broadcast::Receiver<PublishedPacket>>>,
+}
+
+impl PlatformPublishedPacketService {
+    // コンストラクタを追加
+    pub fn new(receiver: broadcast::Receiver<PublishedPacket>) -> Self {
+        let arc_receiver = Arc::new(TokioMutex::new(receiver));
+        Self {
+            reciever: arc_receiver,
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -25,15 +36,19 @@ impl PublishedPacketService for PlatformPublishedPacketService {
         request: Request<rpcserver::PublishedPacketRequest>,
     ) -> Result<Response<Self::StreamPublishedPayloadStream>, Status> {
         println!("Request PublishedPacket = {:?}", request);
-        // [TODO]4から適切な値に変更する？
+
         let (tx, rx) = mpsc::channel(4); //この型は
-        let channel = self.packet_channel.clone();
+        let receiver_clone = Arc::clone(&self.reciever);
         tokio::spawn(async move {
+            println!("RPC Service Daemon Start");
+
             loop {
-                let packet = channel.recv().await.unwrap(); //ここから型推論される
+                let packet = receiver_clone.lock().await.recv().await.unwrap();
+                println!("Daemon {:?}", packet);
                 tx.send(Ok(packet)).await.unwrap();
             }
         });
+
         Ok(Response::new(ReceiverStream::new(rx)))
     }
 }
