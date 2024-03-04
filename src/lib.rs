@@ -11,7 +11,7 @@ use cdrs_tokio::transport::TransportTcp;
 use clap::{App, Arg};
 use futures::stream::StreamExt;
 use futures::SinkExt;
-use mqttdecoder::MQTTPacket;
+use mqttcoder::MQTTPacket;
 use pki_types::{CertificateDer, PrivateKeyDer};
 use rpcserver::rpcserver::PublishedPacket;
 use rustls::ServerConfig;
