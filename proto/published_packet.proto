@@ -9,7 +9,7 @@ message PublishedPacket {
 }
 
 message PublishedPacketRequest {
-    optional string device_id = 1;
+    string device_id = 1;
 }
 
 service PublishedPacketService {
