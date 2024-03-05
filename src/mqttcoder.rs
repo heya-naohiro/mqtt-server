@@ -5,7 +5,7 @@ use std::io::{Error, ErrorKind};
 use tokio_util::codec::{Decoder, Encoder};
 #[derive(Debug)]
 pub enum MQTTPacket {
-    Connect,
+    Connect(Connect),
     Connack(Connack),
     Publish(Publish),
     Disconnect,
@@ -20,6 +20,16 @@ pub enum MQTTPacketHeader {
     _Connack,
     Publish,
     Subscribe,
+    Other,
+}
+
+/* Procol Version */
+#[derive(Debug)]
+pub enum ProtocolVersion {
+    V3,
+    V3_1,
+    V3_1_1,
+    V5,
     Other,
 }
 
@@ -78,6 +88,60 @@ impl Suback {
             // all qos 0 ([TODO] qos negotiation)
             buf.put_u8(0);
         }
+    }
+}
+
+/*  Request Connection */
+#[derive(Debug)]
+pub struct Connect {
+    pub protocol_ver: ProtocolVersion,
+    pub clean_session: bool,
+    pub will: bool,
+    pub will_qos: u8,
+    pub will_retain: bool,
+    pub user_password_flag: bool,
+    pub user_name_flag: bool,
+}
+impl Connect {
+    // variable header
+    // 長さチェック済み
+    pub fn from_byte(buf: &mut BytesMut) -> Result<Option<(Connect, usize)>, Error> {
+        let protocol_name_length = ((buf[0] as usize) << 8) + buf[1] as usize;
+        // e.g. MQIsdp v3.1
+        let protocolname = if let Ok(str) = std::str::from_utf8(&buf[2..2 + protocol_name_length]) {
+            str.to_owned()
+        } else {
+            return Err(Error::new(ErrorKind::Other, "Invalid"));
+        };
+        /* [TODO] protocol name check, if invalid close the connection anyway */
+
+        let offset = protocol_name_length; // rename only
+        let protocol_version = buf[offset];
+
+        // Connection Flag bit 1
+        let clean_session: bool = ((buf[offset + 1] & 0b00000010) >> 1) == 0b00000001;
+        // Connection Flag bit 2
+        let will: bool = ((buf[offset + 1] & 0b00000100) >> 2) == 0b00000001;
+        let will_qos: u8 = (buf[offset + 1] & 0b00011000) >> 3;
+        let will_retain: bool = ((buf[offset + 1] & 0b00100000) >> 5) == 0b00000001;
+        let user_password_flag: bool = ((buf[offset + 1] & 0b01000000) >> 6) == 0b00000001;
+        let user_name_flag: bool = ((buf[offset + 1] & 0b10000000) >> 7) == 0b00000001;
+        // big endian = 上位ビットが先
+        let keepalive_timer: u16 = ((buf[offset + 2] as u16) << 8) + buf[offset + 3] as u16;
+
+        let protocol_ver = ProtocolVersion::V3_1;
+        Ok(Some((
+            Connect {
+                protocol_ver,
+                clean_session,
+                will,
+                will_qos,
+                will_retain,
+                user_name_flag,
+                user_password_flag,
+            },
+            protocol_name_length + 2 + 4,
+        )))
     }
 }
 
