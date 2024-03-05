@@ -292,6 +292,7 @@ async fn process(
                         println!("Connect");
                         /* Store Hashmap */
                         let mut cmap = connection_map.lock().await;
+
                         /* todo */
                         cmap.insert("test".to_string(), packet);
 

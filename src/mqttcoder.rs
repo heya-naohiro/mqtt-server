@@ -183,6 +183,7 @@ impl Connect {
             offset = 2 + password_length;
         }
         // Password
+
         let protocol_ver = ProtocolVersion::V3_1;
         Ok(Some((
             Connect {
