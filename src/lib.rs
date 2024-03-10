@@ -291,8 +291,7 @@ async fn process(
                     mqttcoder::MQTTPacket::Connect(packet) => {
                         println!("Connect");
                         /* Store Hashmap */
-                        let mut cmap = connection_map.lock().await;
-
+                        let mut cmap = connection_map.lock().unwrap();
                         /* todo */
                         cmap.insert("test".to_string(), packet);
 
