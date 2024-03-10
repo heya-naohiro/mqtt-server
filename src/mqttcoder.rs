@@ -378,9 +378,20 @@ impl Decoder for MqttDecoder {
                 match header.mtype {
                     MQTTPacketHeader::Connect => {
                         //これ以上処理しないので（いまのところ）残りのbyteを破棄する
-                        src.advance(src.len());
+                        let result = Connect::from_byte(src);
+                        let (packet, size) = match result {
+                            Ok(Some((packet, size))) => (packet, size),
+                            Ok(None) => {
+                                return Ok(None);
+                            }
+                            Err(err) => {
+                                self.reset();
+                                return Err(err);
+                            }
+                        };
+                        src.advance(size);
                         self.reset();
-                        Ok(Some(MQTTPacket::Connect))
+                        Ok(Some(MQTTPacket::Connect(packet)))
                     }
                     MQTTPacketHeader::Disconnect => {
                         src.advance(src.len());

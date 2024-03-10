@@ -30,9 +30,10 @@ use cdrs_tokio::authenticators::NoneAuthenticatorProvider;
 use cdrs_tokio::cluster::NodeTcpConfigBuilder;
 use std::collections::HashMap;
 use std::error::Error;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::io::split;
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
 type ConnectionStateDB = Arc<Mutex<HashMap<ConnectionKey, mqttcoder::Connect>>>;
@@ -290,7 +291,7 @@ async fn process(
                     mqttcoder::MQTTPacket::Connect(packet) => {
                         println!("Connect");
                         /* Store Hashmap */
-                        let mut cmap = connectionMap.lock().unwrap();
+                        let mut cmap = connectionMap.lock().await;
                         /* todo */
                         cmap.insert("test".to_string(), packet);
 
