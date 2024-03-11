@@ -1,13 +1,13 @@
-use cdrs_tokio::cluster::session::{Session, SessionBuilder, TcpSessionBuilder};
+use cdrs_tokio::cluster::session::{Session};
 
 use cdrs_tokio::cluster::TcpConnectionManager;
 use cdrs_tokio::load_balancing::RoundRobinLoadBalancingStrategy;
-use cdrs_tokio::query::*;
+
 use cdrs_tokio::query_values;
 use cdrs_tokio::transport::TransportTcp;
 use chrono::Utc;
 use std::error::Error;
-use std::os::unix::net::SocketAddr;
+
 use std::sync::Arc;
 
 use crate::mqttcoder;
