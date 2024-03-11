@@ -94,7 +94,6 @@ async fn test_connect_and_publish() {
     let _ = task.await.expect("server panicked");
 }
 
-/*
 #[tokio::test]
 async fn test_publish_and_datarecieve() {
     let use_port = available_port().unwrap();
@@ -142,5 +141,3 @@ async fn test_publish_and_datarecieve() {
     let _ = sender.send(false);
     let _ = task.await.expect("server panicked");
 }
-
-*/
