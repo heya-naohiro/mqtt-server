@@ -5,23 +5,19 @@ mod rpcserver;
 use std::fs::File;
 use std::io::{self, BufReader};
 //use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use cdrs_tokio::cluster::session::{Session, SessionBuilder, TcpSessionBuilder};
+use cdrs_tokio::cluster::session::{SessionBuilder, TcpSessionBuilder};
 use cdrs_tokio::load_balancing::RoundRobinLoadBalancingStrategy;
-use cdrs_tokio::transport::TransportTcp;
 use clap::{App, Arg};
 use futures::stream::StreamExt;
 use futures::SinkExt;
-use mqttcoder::MQTTPacket;
 use pki_types::{CertificateDer, PrivateKeyDer};
 use rpcserver::rpcserver::PublishedPacket;
 use rustls::ServerConfig;
 use rustls_pemfile::{certs, rsa_private_keys};
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio_rustls::TlsAcceptor;
 use tonic::transport::Server;
@@ -30,22 +26,20 @@ use crate::rpcserver::rpcserver::published_packet_service_server::PublishedPacke
 use tokio::sync::broadcast;
 
 use cdrs_tokio::authenticators::NoneAuthenticatorProvider;
-use cdrs_tokio::cluster::topology::Node;
-use cdrs_tokio::cluster::NodeAddress;
-use cdrs_tokio::cluster::{NodeTcpConfigBuilder, TcpConnectionManager};
+
+use cdrs_tokio::cluster::NodeTcpConfigBuilder;
+use std::collections::HashMap;
 use std::error::Error;
+use std::sync::Arc;
 use tokio::io::split;
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-type ServerResult<T> = Result<T, Box<dyn Error>>;
+type ConnectionStateDB = Arc<Mutex<HashMap<ConnectionKey, mqttcoder::Connect>>>;
+type ConnectionKey = String; /* may be mqtt id or Common name */
 
-type CurrentSession = Session<
-    TransportTcp,
-    TcpConnectionManager,
-    RoundRobinLoadBalancingStrategy<TransportTcp, TcpConnectionManager>,
->;
-use tokio_stream::StreamMap;
+type ServerResult<T> = Result<T, Box<dyn Error>>;
 
 #[derive(Debug)]
 pub struct Config {
@@ -150,7 +144,11 @@ async fn handle_user_connection(reciever: broadcast::Receiver<PublishedPacket>) 
     let _ = Server::builder().add_service(svc).serve(addr).await;
 }
 
-async fn handle_device_connection(config: Arc<Config>, sender: broadcast::Sender<PublishedPacket>) {
+async fn handle_device_connection(
+    config: Arc<Config>,
+    sender: broadcast::Sender<PublishedPacket>,
+    connection_map: ConnectionStateDB,
+) {
     let server_config = config.serverconfig.clone();
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
     let listener = TcpListener::bind(config.address).await.unwrap();
@@ -158,8 +156,14 @@ async fn handle_device_connection(config: Arc<Config>, sender: broadcast::Sender
     loop {
         let (mut stream, addr) = listener.accept().await.unwrap();
         let acceptor = acceptor.clone();
-        if let Err(err) =
-            process_connection(&mut stream, acceptor, config.clone(), sender.clone()).await
+        if let Err(err) = process_connection(
+            &mut stream,
+            acceptor,
+            config.clone(),
+            sender.clone(),
+            connection_map.clone(),
+        )
+        .await
         {
             println!("Error process from {:?}, err {:?}", addr, err);
         } else {
@@ -200,6 +204,9 @@ pub async fn run_main(config: Config, receiver: oneshot::Receiver<bool>) -> io::
     let c_clone = Arc::clone(&c);
     println!("Run main3");
 
+    // Connectionの共有
+    let connection_db = Arc::new(Mutex::new(HashMap::new()));
+
     // mqttとgRPCをつなぐ
     let (s, r) = broadcast::channel::<PublishedPacket>(10);
     tokio::select! {
@@ -213,7 +220,7 @@ pub async fn run_main(config: Config, receiver: oneshot::Receiver<bool>) -> io::
                 }
             }
         },
-        _ = handle_device_connection(c_clone, s) => {
+        _ = handle_device_connection(c_clone, s,connection_db) => {
         },
         _ = handle_user_connection(r) => {
 
@@ -227,8 +234,9 @@ async fn process_connection(
     acceptor: TlsAcceptor,
     config: Arc<Config>,
     sender: broadcast::Sender<PublishedPacket>,
+    connection_map: ConnectionStateDB,
 ) -> io::Result<()> {
-    if let Err(err) = process(socket, acceptor, config, sender).await {
+    if let Err(err) = process(socket, acceptor, config, sender, connection_map).await {
         println!("Error process from err {:?}", err);
         socket.shutdown().await?;
         return Err(err);
@@ -245,6 +253,7 @@ async fn process(
     acceptor: TlsAcceptor,
     config: Arc<Config>,
     sender: broadcast::Sender<PublishedPacket>,
+    connection_map: ConnectionStateDB,
 ) -> io::Result<()> {
     let mut socket = match acceptor.accept(socket).await {
         Ok(value) => value,
@@ -279,8 +288,13 @@ async fn process(
             Ok(data) => {
                 println!("received: {:?}", data);
                 match data {
-                    mqttcoder::MQTTPacket::Connect => {
+                    mqttcoder::MQTTPacket::Connect(packet) => {
                         println!("Connect");
+                        /* Store Hashmap */
+                        let mut cmap = connection_map.lock().await;
+                        /* todo */
+                        cmap.insert("test".to_string(), packet);
+
                         let packet = mqttcoder::Connack::new();
                         let result = frame_writer
                             .send(mqttcoder::MQTTPacket::Connack(packet))
