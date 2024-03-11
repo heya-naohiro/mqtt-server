@@ -253,7 +253,7 @@ async fn process(
     acceptor: TlsAcceptor,
     config: Arc<Config>,
     sender: broadcast::Sender<PublishedPacket>,
-    connectionMap: ConnectionStateDB,
+    connection_map: ConnectionStateDB,
 ) -> io::Result<()> {
     let mut socket = match acceptor.accept(socket).await {
         Ok(value) => value,
@@ -291,7 +291,7 @@ async fn process(
                     mqttcoder::MQTTPacket::Connect(packet) => {
                         println!("Connect");
                         /* Store Hashmap */
-                        let mut cmap = connectionMap.lock().await;
+                        let mut cmap = connection_map.lock().await;
                         /* todo */
                         cmap.insert("test".to_string(), packet);
 

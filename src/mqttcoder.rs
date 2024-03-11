@@ -101,22 +101,30 @@ pub struct Connect {
     pub will_retain: bool,
     pub user_password_flag: bool,
     pub user_name_flag: bool,
+    pub client_id: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
 }
 impl Connect {
     // variable header
     // 長さチェック済み
     pub fn from_byte(buf: &mut BytesMut) -> Result<Option<(Connect, usize)>, Error> {
         let protocol_name_length = ((buf[0] as usize) << 8) + buf[1] as usize;
+        println!("protocol_name_length: {:?}", protocol_name_length);
+
         // e.g. MQIsdp v3.1
         let protocolname = if let Ok(str) = std::str::from_utf8(&buf[2..2 + protocol_name_length]) {
             str.to_owned()
         } else {
             return Err(Error::new(ErrorKind::Other, "Invalid"));
         };
+
+        println!("protocolname: {:?}", protocolname);
         /* [TODO] protocol name check, if invalid close the connection anyway */
 
-        let offset = protocol_name_length; // rename only
+        let offset = 2 + protocol_name_length;
         let protocol_version = buf[offset];
+        println!("version: {:?}", protocol_version);
 
         // Connection Flag bit 1
         let clean_session: bool = ((buf[offset + 1] & 0b00000010) >> 1) == 0b00000001;
@@ -128,7 +136,53 @@ impl Connect {
         let user_name_flag: bool = ((buf[offset + 1] & 0b10000000) >> 7) == 0b00000001;
         // big endian = 上位ビットが先
         let keepalive_timer: u16 = ((buf[offset + 2] as u16) << 8) + buf[offset + 3] as u16;
+        println!("keepalive_timer: {:?}", keepalive_timer);
 
+        // Client Identification , Must have
+        let client_id_length = ((buf[offset + 4] as usize) << 8) + buf[offset + 5] as usize;
+        let client_id = if let Ok(str) =
+            std::str::from_utf8(&buf[(offset + 6)..(offset + 6 + client_id_length)])
+        {
+            str.to_owned()
+        } else {
+            return Err(Error::new(ErrorKind::Other, "Invalid"));
+        };
+        let mut offset = offset + 6 + client_id_length;
+        // Will: [TODO] Not implemented
+        if will {
+            let will_topic_length = ((buf[offset] as usize) << 8) + buf[offset + 2] as usize;
+            offset = 2 + will_topic_length;
+            let will_message_length = ((buf[offset] as usize) << 8) + buf[offset + 2] as usize;
+            // todo will packet struct
+            offset = 2 + will_message_length;
+        }
+
+        // Username
+        let mut username = None;
+        if user_name_flag {
+            let username_length = ((buf[offset] as usize) << 8) + buf[offset + 2] as usize;
+            username =
+                if let Ok(str) = std::str::from_utf8(&buf[(offset)..(offset + username_length)]) {
+                    Some(str.to_owned())
+                } else {
+                    return Err(Error::new(ErrorKind::Other, "Invalid"));
+                };
+            offset = 2 + username_length;
+        }
+
+        // Password
+        let mut password = None;
+        if user_password_flag {
+            let password_length = ((buf[offset] as usize) << 8) + buf[offset + 2] as usize;
+            password =
+                if let Ok(str) = std::str::from_utf8(&buf[(offset)..(offset + password_length)]) {
+                    Some(str.to_owned())
+                } else {
+                    return Err(Error::new(ErrorKind::Other, "Invalid"));
+                };
+            offset = 2 + password_length;
+        }
+        // Password
         let protocol_ver = ProtocolVersion::V3_1;
         Ok(Some((
             Connect {
@@ -139,8 +193,11 @@ impl Connect {
                 will_retain,
                 user_name_flag,
                 user_password_flag,
+                username,
+                password,
+                client_id,
             },
-            protocol_name_length + 2 + 4,
+            offset,
         )))
     }
 }
@@ -382,6 +439,7 @@ impl Decoder for MqttDecoder {
                         let (packet, size) = match result {
                             Ok(Some((packet, size))) => (packet, size),
                             Ok(None) => {
+                                // TODO
                                 return Ok(None);
                             }
                             Err(err) => {
@@ -389,7 +447,9 @@ impl Decoder for MqttDecoder {
                                 return Err(err);
                             }
                         };
-                        src.advance(size);
+                        println!("size: {}, length: {}", size, src.len());
+                        // [TODO] advanceはheaderベースでやって安全性を高めること下記のように
+                        src.advance(self.realremaining_length);
                         self.reset();
                         Ok(Some(MQTTPacket::Connect(packet)))
                     }
@@ -404,6 +464,7 @@ impl Decoder for MqttDecoder {
                             Ok(None) => return Ok(None),
                             Err(e) => return Err(e),
                         };
+                        // [TODO] advanceはheaderベースでやって安全性を高める
                         src.advance(readbyte);
                         if self.realremaining_length < readbyte {
                             return Err(Error::new(ErrorKind::Other, "Invalid byte size zbbb"));
@@ -416,6 +477,7 @@ impl Decoder for MqttDecoder {
                             Ok(value) => value,
                             Err(e) => return Err(e),
                         };
+                        // [TODO] advanceはheaderベースでやって安全性を高める
                         src.advance(readbyte);
                         self.reset();
                         Ok(Some(MQTTPacket::Subscribe(variable_header_only)))
@@ -436,6 +498,7 @@ impl Decoder for MqttDecoder {
                             readbyte, self.realremaining_length
                         );
                         println!("variable header {:?}", variable_header_only);
+                        // [TODO] advanceはheaderベースでやって安全性を高める
                         src.advance(readbyte);
                         // save packet temporary
                         println!("byte check {:?} {:?}", self.realremaining_length, readbyte);
