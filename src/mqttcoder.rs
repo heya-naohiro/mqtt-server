@@ -183,52 +183,6 @@ impl Connect {
             offset = 2 + password_length;
         }
         // Password
-
-        // Client Identification , Must have
-        let client_id_length = ((buf[offset + 4] as usize) << 8) + buf[offset + 5] as usize;
-        let client_id = if let Ok(str) =
-            std::str::from_utf8(&buf[(offset + 6)..(offset + 6 + client_id_length)])
-        {
-            str.to_owned()
-        } else {
-            return Err(Error::new(ErrorKind::Other, "Invalid"));
-        };
-        let mut offset = offset + 6 + client_id_length;
-        // Will: [TODO] Not implemented
-        if will {
-            let will_topic_length = ((buf[offset] as usize) << 8) + buf[offset + 2] as usize;
-            offset = 2 + will_topic_length;
-            let will_message_length = ((buf[offset] as usize) << 8) + buf[offset + 2] as usize;
-            // todo will packet struct
-            offset = 2 + will_message_length;
-        }
-
-        // Username
-        let mut username = None;
-        if user_name_flag {
-            let username_length = ((buf[offset] as usize) << 8) + buf[offset + 2] as usize;
-            username =
-                if let Ok(str) = std::str::from_utf8(&buf[(offset)..(offset + username_length)]) {
-                    Some(str.to_owned())
-                } else {
-                    return Err(Error::new(ErrorKind::Other, "Invalid"));
-                };
-            offset = 2 + username_length;
-        }
-
-        // Password
-        let mut password = None;
-        if user_password_flag {
-            let password_length = ((buf[offset] as usize) << 8) + buf[offset + 2] as usize;
-            password =
-                if let Ok(str) = std::str::from_utf8(&buf[(offset)..(offset + password_length)]) {
-                    Some(str.to_owned())
-                } else {
-                    return Err(Error::new(ErrorKind::Other, "Invalid"));
-                };
-            offset = 2 + password_length;
-        }
-        // Password
         let protocol_ver = ProtocolVersion::V3_1;
         Ok(Some((
             Connect {
