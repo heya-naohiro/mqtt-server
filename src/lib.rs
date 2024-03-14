@@ -10,14 +10,17 @@ use cdrs_tokio::load_balancing::RoundRobinLoadBalancingStrategy;
 use clap::{App, Arg};
 use futures::stream::StreamExt;
 use futures::SinkExt;
+use mqttcoder::{MQTTPacket, MqttDecoder};
 use pki_types::{CertificateDer, PrivateKeyDer};
 use rpcserver::rpcserver::PublishedPacket;
 use rustls::ServerConfig;
 use rustls_pemfile::{certs, rsa_private_keys};
 use std::net::SocketAddr;
 use std::path::Path;
-use tokio::io::AsyncWriteExt;
+use tokio::io::WriteHalf;
+use tokio::io::{AsyncWriteExt, ReadHalf};
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio_rustls::TlsAcceptor;
 use tonic::transport::Server;
@@ -248,19 +251,37 @@ async fn process_connection(
     return Ok(());
 }
 
-async fn process(
-    socket: &mut TcpStream,
-    acceptor: TlsAcceptor,
+async fn send_packet(
+    mut frame_writer: FramedWrite<
+        WriteHalf<tokio_rustls::server::TlsStream<&mut TcpStream>>,
+        mqttcoder::MqttEncoder,
+    >,
+    mut rx: mpsc::Receiver<MQTTPacket>,
+) -> io::Result<()> {
+    while let Some(packet) = rx.recv().await {
+        let result = frame_writer.send(packet).await;
+        match result {
+            Ok(_) => {
+                println!("Success Send Packet")
+            }
+            Err(err) => {
+                eprintln!("Error Send Packet {:?}", err)
+            }
+        }
+    }
+    return Ok(());
+}
+
+async fn recv_packet(
+    mut frame_reader: FramedRead<
+        ReadHalf<tokio_rustls::server::TlsStream<&mut TcpStream>>,
+        mqttcoder::MqttDecoder,
+    >,
+    connection_map: ConnectionStateDB,
+    tx: mpsc::Sender<MQTTPacket>,
     config: Arc<Config>,
     sender: broadcast::Sender<PublishedPacket>,
-    connection_map: ConnectionStateDB,
 ) -> io::Result<()> {
-    let mut socket = match acceptor.accept(socket).await {
-        Ok(value) => value,
-        Err(error) => {
-            return Err(error);
-        }
-    };
     /*
        DB Connection
     */
@@ -271,18 +292,10 @@ async fn process(
         .build()
         .await
         .unwrap();
-
     let lb = RoundRobinLoadBalancingStrategy::new();
     let session: Arc<cassandra_store::CurrentSession> =
         Arc::new(TcpSessionBuilder::new(lb, cluster_config).build());
 
-    let stream = &mut socket;
-    let (rd, wr) = split(stream);
-
-    let decoder = mqttcoder::MqttDecoder::new();
-    let mut frame_reader = FramedRead::new(rd, decoder);
-    let encoder = mqttcoder::MqttEncoder::new();
-    let mut frame_writer = FramedWrite::new(wr, encoder);
     while let Some(frame) = frame_reader.next().await {
         match frame {
             Ok(data) => {
@@ -296,16 +309,8 @@ async fn process(
                         cmap.insert("test".to_string(), packet);
 
                         let packet = mqttcoder::Connack::new();
-                        let result = frame_writer
-                            .send(mqttcoder::MQTTPacket::Connack(packet))
-                            .await;
-                        match result {
-                            Ok(_) => {
-                                println!("Success Connack")
-                            }
-                            Err(err) => {
-                                eprintln!("Error Connack {:?}", err)
-                            }
+                        if let Err(err) = tx.send(mqttcoder::MQTTPacket::Connack(packet)).await {
+                            return Err(io::Error::new(io::ErrorKind::Other, err));
                         }
                     }
                     mqttcoder::MQTTPacket::Publish(packet) => {
@@ -319,6 +324,7 @@ async fn process(
                         {
                             eprintln!("Error DB Store Error {:?}", err)
                         }
+                        /* user send */
                         let send_packet = PublishedPacket {
                             device_id: "device".to_string(),
                             topic: packet.topic_name,
@@ -341,23 +347,57 @@ async fn process(
                             packet.message_id,
                             packet.subscription_list.len(),
                         );
-                        let result = frame_writer
-                            .send(mqttcoder::MQTTPacket::Suback(packet))
-                            .await;
-                        match result {
-                            Ok(_) => {
-                                println!("Success Suback")
-                            }
-                            Err(err) => {
-                                eprintln!("Error Suback {:?}", err)
-                            }
-                        }
+                        // [TODO] Error handling
+                        if let Err(err) = tx.send(mqttcoder::MQTTPacket::Suback(packet)).await {
+                            return Err(io::Error::new(io::ErrorKind::Other, err));
+                        };
                     }
                     _ => {}
                 }
             }
             Err(err) => eprintln!("error: {:?}", err),
         }
+    }
+    return Ok(());
+}
+
+async fn process(
+    socket: &mut TcpStream,
+    acceptor: TlsAcceptor,
+    config: Arc<Config>,
+    sender: broadcast::Sender<PublishedPacket>,
+    connection_map: ConnectionStateDB,
+) -> io::Result<()> {
+    let socket = match acceptor.accept(socket).await {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(error);
+        }
+    };
+
+    let (rd, wr) = split(socket);
+
+    let decoder = mqttcoder::MqttDecoder::new();
+    let frame_reader = FramedRead::new(rd, decoder);
+    let encoder = mqttcoder::MqttEncoder::new();
+
+    let frame_writer = FramedWrite::new(wr, encoder);
+
+    let (tx, rx) = mpsc::channel(32);
+
+    tokio::select! {
+        _ = send_packet(frame_writer, rx) => {
+
+        }
+        _ = recv_packet(
+            frame_reader,
+            connection_map,
+            tx,
+            config,
+            sender) => {
+
+            }
+        /* [TODO] cancel from circuit breaker */
     }
     return Ok(());
 }
