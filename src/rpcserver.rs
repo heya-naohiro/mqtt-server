@@ -1,10 +1,10 @@
 use crate::rpcserver::rpcserver::published_packet_service_server::PublishedPacketService;
-use rpcserver::{PublishedPacket};
-use std::sync::{Arc};
+use rpcserver::{PublishRequest, PublishedPacket};
+use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as TokioMutex;
-use tokio_stream::{wrappers::ReceiverStream};
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
 pub mod rpcserver {
@@ -31,13 +31,14 @@ impl PublishedPacketService for PlatformPublishedPacketService {
     type StreamPublishedPayloadStream = ReceiverStream<Result<PublishedPacket, Status>>;
     //  expected enum `std::result::Result<tonic::Response<ReceiverStream<std::result::Result<PublishedPacket, Status>>>, Status>`
 
+    /* Device -> Server -> gRPCクライアントにStream */
     async fn stream_published_payload(
         &self,
         request: Request<rpcserver::PublishedPacketRequest>,
     ) -> Result<Response<Self::StreamPublishedPayloadStream>, Status> {
         println!("Request PublishedPacket = {:?}", request);
 
-        let (tx, rx) = mpsc::channel(4); //この型は
+        let (tx, rx) = mpsc::channel(4);
         let receiver_clone = Arc::clone(&self.reciever);
         tokio::spawn(async move {
             println!("RPC Service Daemon Start");
@@ -50,5 +51,17 @@ impl PublishedPacketService for PlatformPublishedPacketService {
         });
 
         Ok(Response::new(ReceiverStream::new(rx)))
+    }
+
+    /* gRPCクライアント -> Server -> Device に 1 packet Push */
+    async fn publish_payload_to_device(
+        &self,
+        request: Request<rpcserver::PublishRequest>,
+    ) -> Result<Response<rpcserver::PublishResponse>, Status> {
+        println!("Publish Request {:?}", request);
+        let reply = rpcserver::PublishResponse {
+            code: "Success".into(),
+        };
+        Ok(Response::new(reply))
     }
 }
