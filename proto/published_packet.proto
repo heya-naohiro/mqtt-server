@@ -12,6 +12,18 @@ message PublishedPacketRequest {
     optional string device_id = 1;
 }
 
+message PublishRequest {
+    string device_id = 1;
+    string topic = 2;
+    bytes payload = 3;
+}
+
+message PublishResponse {
+    // TODO detailed
+    string code = 1;
+}
+
 service PublishedPacketService {
     rpc StreamPublishedPayload(PublishedPacketRequest) returns (stream PublishedPacket) {}
+    rpc PublishPayloadToDevice(PublishRequest) returns (PublishResponse);
 }

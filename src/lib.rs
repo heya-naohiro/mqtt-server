@@ -10,7 +10,7 @@ use cdrs_tokio::load_balancing::RoundRobinLoadBalancingStrategy;
 use clap::{App, Arg};
 use futures::stream::StreamExt;
 use futures::SinkExt;
-use mqttcoder::{MQTTPacket, MqttDecoder};
+use mqttcoder::{Connect, MQTTPacket, MqttDecoder};
 use pki_types::{CertificateDer, PrivateKeyDer};
 use rpcserver::rpcserver::PublishedPacket;
 use rustls::ServerConfig;
@@ -39,10 +39,39 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-type ConnectionStateDB = Arc<Mutex<HashMap<ConnectionKey, mqttcoder::Connect>>>;
+type ConnectionStateDB = Arc<Mutex<HashMap<ConnectionKey, ConnectInfo>>>;
 type ConnectionKey = String; /* may be mqtt id or Common name */
 
 type ServerResult<T> = Result<T, Box<dyn Error>>;
+
+#[derive(Debug)]
+pub struct ConnectInfo {
+    pub connect: mqttcoder::Connect,
+    pub sender: mpsc::Sender<MQTTPacket>,
+    pub sub_filters: Vec<Subfilter>,
+}
+impl ConnectInfo {
+    pub fn new(connect: mqttcoder::Connect, sender: mpsc::Sender<MQTTPacket>) -> ConnectInfo {
+        ConnectInfo {
+            connect,
+            sender,
+            sub_filters: vec![],
+            // [TODO] handover sub_filters if clean session is false ?
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Subfilter {
+    pub filter: Filter,
+    pub qos: u8,
+}
+
+#[derive(Debug)]
+pub struct Filter {
+    // all 8bit str
+    pub elements: Vec<u8>,
+}
 
 #[derive(Debug)]
 pub struct Config {
@@ -305,8 +334,11 @@ async fn recv_packet(
                         println!("Connect");
                         /* Store Hashmap */
                         let mut cmap = connection_map.lock().await;
-                        /* todo */
-                        cmap.insert("test".to_string(), packet);
+                        /* [TODO] Need Check Client id already exist, close previous session  */
+                        cmap.insert(
+                            packet.client_id.clone(),
+                            ConnectInfo::new(packet, tx.clone()),
+                        );
 
                         let packet = mqttcoder::Connack::new();
                         if let Err(err) = tx.send(mqttcoder::MQTTPacket::Connack(packet)).await {
