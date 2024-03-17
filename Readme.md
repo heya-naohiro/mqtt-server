@@ -1,6 +1,30 @@
 > [!WARNING]
 > 🚧 This repository is for understanding the handling of MQTT and tokio, and experimental. It is a work in progress.
 
+## architecture
+
+```mermaid
+graph LR
+    client["mqtt client"] <-- MQTT --> MQTTServer
+    User <-- gRPC Publish/Streaming --> MQTTServer
+    subgraph server
+        direction BT 
+        MQTTServer --> DB[(Database)]
+    end
+```
+
+- The user can communicate with the server via gRPC and publish packets to the devices.
+
+- The user can receive packets published by the devices through gRPC server streaming via the server.
+
+- Pub/Sub communication between devices and the server via MQTT.
+
+- The server utilizes tokio's green threads to concurrently handle communication with multiple devices.
+
+- I aim to develop software that communicates as a server with clients, rather than aiming to function as software that communicates with each other like brokers.
+
+- I am currently only implementing QoS0 / MQTTv3.1
+
 ## build
 ```
 cargo build
@@ -27,7 +51,3 @@ OPTIONS:
     -k, --key <FILEPATH>                server key @ pem format [default: private.key]
 ```
 
-## Goal, not Goal
-Not aiming for now: Implementing broker features, Communication between devices other than the host, adding protocols other than MQTT.
-
-Future goals: Scaling out, performance measurement.
