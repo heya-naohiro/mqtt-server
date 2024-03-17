@@ -1,7 +1,7 @@
 mod cassandra_store;
+mod connection_store;
 mod mqttcoder;
 mod rpcserver;
-
 use std::fs::File;
 use std::io::{self, BufReader};
 //use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -168,9 +168,13 @@ pub fn get_args() -> ServerResult<Config> {
     })
 }
 
-async fn handle_user_connection(reciever: broadcast::Receiver<PublishedPacket>) {
+async fn handle_user_connection(
+    reciever: broadcast::Receiver<PublishedPacket>,
+    connection_map: connection_store::ConnectionStateDB,
+) {
     let addr = "[::1]:10000".parse().unwrap();
-    let publish_packet_service = rpcserver::PlatformPublishedPacketService::new(reciever);
+    let publish_packet_service =
+        rpcserver::PlatformPublishedPacketService::new(reciever, connection_map);
     let svc = PublishedPacketServiceServer::new(publish_packet_service);
 
     let _ = Server::builder().add_service(svc).serve(addr).await;
@@ -179,7 +183,7 @@ async fn handle_user_connection(reciever: broadcast::Receiver<PublishedPacket>) 
 async fn handle_device_connection(
     config: Arc<Config>,
     sender: broadcast::Sender<PublishedPacket>,
-    connection_map: ConnectionStateDB,
+    connection_map: connection_store::ConnectionStateDB,
 ) {
     let server_config = config.serverconfig.clone();
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
@@ -236,9 +240,9 @@ pub async fn run_main(config: Config, receiver: oneshot::Receiver<bool>) -> io::
     let c_clone = Arc::clone(&c);
     println!("Run main3");
 
-    // Connectionの共有
+    // Connection Informationの共有
     let connection_db = Arc::new(Mutex::new(HashMap::new()));
-
+    let connection_db_2 = connection_db.clone();
     // mqttとgRPCをつなぐ
     let (s, r) = broadcast::channel::<PublishedPacket>(10);
     tokio::select! {
@@ -252,9 +256,9 @@ pub async fn run_main(config: Config, receiver: oneshot::Receiver<bool>) -> io::
                 }
             }
         },
-        _ = handle_device_connection(c_clone, s,connection_db) => {
+        _ = handle_device_connection(c_clone, s, connection_db) => {
         },
-        _ = handle_user_connection(r) => {
+        _ = handle_user_connection(r, connection_db_2) => {
 
         },
     }
@@ -266,7 +270,7 @@ async fn process_connection(
     acceptor: TlsAcceptor,
     config: Arc<Config>,
     sender: broadcast::Sender<PublishedPacket>,
-    connection_map: ConnectionStateDB,
+    connection_map: connection_store::ConnectionStateDB,
 ) -> io::Result<()> {
     if let Err(err) = process(socket, acceptor, config, sender, connection_map).await {
         println!("Error process from err {:?}", err);
@@ -306,7 +310,7 @@ async fn recv_packet(
         ReadHalf<tokio_rustls::server::TlsStream<&mut TcpStream>>,
         mqttcoder::MqttDecoder,
     >,
-    connection_map: ConnectionStateDB,
+    connection_map: connection_store::ConnectionStateDB,
     tx: mpsc::Sender<MQTTPacket>,
     config: Arc<Config>,
     sender: broadcast::Sender<PublishedPacket>,
@@ -337,7 +341,7 @@ async fn recv_packet(
                         /* [TODO] Need Check Client id already exist, close previous session  */
                         cmap.insert(
                             packet.client_id.clone(),
-                            ConnectInfo::new(packet, tx.clone()),
+                            connection_store::ConnectInfo::new(packet, tx.clone()),
                         );
 
                         let packet = mqttcoder::Connack::new();
@@ -398,7 +402,7 @@ async fn process(
     acceptor: TlsAcceptor,
     config: Arc<Config>,
     sender: broadcast::Sender<PublishedPacket>,
-    connection_map: ConnectionStateDB,
+    connection_map: connection_store::ConnectionStateDB,
 ) -> io::Result<()> {
     let socket = match acceptor.accept(socket).await {
         Ok(value) => value,
