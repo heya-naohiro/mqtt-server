@@ -3,6 +3,7 @@ use bytes::BufMut;
 use bytes::BytesMut;
 use std::io::{Error, ErrorKind};
 use tokio_util::codec::{Decoder, Encoder};
+
 #[derive(Debug)]
 pub enum MQTTPacket {
     Connect(Connect),
@@ -276,9 +277,55 @@ pub struct Publish {
     pub message_id: u32,
     // まずは小さいサイズ想定ですべてVec<u8>にコピーする
     pub payload: Vec<u8>,
+    // [TODO]: QoS
 }
 
 impl Publish {
+    pub fn new(topic_name: String, message_id: u32, payload: Vec<u8>) -> Publish {
+        Publish {
+            topic_name,
+            message_id,
+            payload,
+        }
+    }
+    fn encode_remaining_length(&self, mut length: usize) -> Vec<u8> {
+        let mut remaining_length = Vec::new();
+        for _ in 1..5 {
+            let mut digit = (length % 128) as u8;
+            length /= 128;
+            if length > 0 {
+                digit |= 0x80;
+            }
+            remaining_length.push(digit);
+            if length == 0 {
+                break;
+            }
+        }
+        remaining_length
+    }
+
+    pub fn to_buf(&self, buf: &mut BytesMut) {
+        // [TOOD] QoS/DUP/Retain, QoS0のみ
+        let header: u8 = 0b00110000;
+        // topic length, topic, (packet id /QoS0の場合は存在しない)
+        let length: usize = 2 + self.topic_name.len() /* + 2 */ + self.payload.len(); //byte
+        let length = self.encode_remaining_length(length); // MQTT5はプロパティが入る
+
+        let topic_length = self.topic_name.len() as u16;
+
+        buf.put_u8(header);
+        buf.extend_from_slice(&length);
+        // topic
+        // big endian
+        buf.put_u16(topic_length);
+        // [TODO]packet id (QoS1/2)
+        // [TODO]property (MQTT5)
+        buf.extend_from_slice(&self.topic_name.clone().into_bytes());
+
+        // need stream?
+        buf.extend_from_slice(&self.payload)
+    }
+
     pub fn payload_from_byte(&mut self, buf: &mut BytesMut, remain: usize) -> Result<usize, Error> {
         println!("->>>> {:?}", buf);
         if buf.len() > remain {
@@ -611,11 +658,15 @@ impl Encoder<MQTTPacket> for MqttEncoder {
     type Error = std::io::Error;
 
     fn encode(&mut self, packet: MQTTPacket, buf: &mut BytesMut) -> Result<(), Self::Error> {
-        match packet {
-            MQTTPacket::Connack(x) => x.to_buf(buf),
-            MQTTPacket::Suback(x) => x.to_buf(buf),
-            _ => {}
-        }
-        return Ok(());
+        let res = match packet {
+            MQTTPacket::Connack(x) => Ok(x.to_buf(buf)),
+            MQTTPacket::Suback(x) => Ok(x.to_buf(buf)),
+            MQTTPacket::Publish(x) => Ok(x.to_buf(buf)),
+            _ => {
+                eprintln!("Unexpected Encode packet");
+                Err(Error::new(ErrorKind::Other, "Invalid"))
+            }
+        };
+        return res;
     }
 }
