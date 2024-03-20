@@ -366,7 +366,6 @@ async fn recv_packet(
                             topic: packet.topic_name,
                             payload: packet.payload,
                         };
-                        println!("packet SEND!!!!!!!!!!!");
                         let result = sender.send(send_packet);
                         match result {
                             Err(err) => eprintln!("Packet broadcast Error {}", err),
@@ -378,7 +377,6 @@ async fn recv_packet(
                         break;
                     }
                     mqttcoder::MQTTPacket::Subscribe(packet) => {
-                        println!("Subscribe Packet {:?}", packet);
                         let packet = mqttcoder::Suback::new(
                             packet.message_id,
                             packet.subscription_list.len(),
@@ -388,6 +386,16 @@ async fn recv_packet(
                             return Err(io::Error::new(io::ErrorKind::Other, err));
                         };
                     }
+                    mqttcoder::MQTTPacket::Pingreq(_packet) => {
+                        // ping / pingresp
+                        println!("Recv Ping req");
+                        let packet = mqttcoder::Pingresp::new();
+                        if let Err(err) = tx.send(mqttcoder::MQTTPacket::Pingresp(packet)).await {
+                            return Err(io::Error::new(io::ErrorKind::Other, err));
+                        };
+                        println!("Ping res");
+                    }
+
                     _ => {}
                 }
             }
