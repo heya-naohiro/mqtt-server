@@ -12,6 +12,8 @@ pub enum MQTTPacket {
     Disconnect,
     Subscribe(Subscribe),
     Suback(Suback),
+    Pingreq(Pingreq),
+    Pingresp(Pingresp),
     _Other,
 }
 #[derive(Debug)]
@@ -21,6 +23,7 @@ pub enum MQTTPacketHeader {
     _Connack,
     Publish,
     Subscribe,
+    Pingreq,
     Other,
 }
 
@@ -59,6 +62,26 @@ impl Connack {
         buf.put_u8(length);
         buf.put_u8(flags);
         buf.put_u8(self.return_code);
+    }
+}
+
+#[derive(Debug)]
+pub struct Pingreq {}
+impl Pingreq {
+    pub fn from_byte(_buf: &mut BytesMut) -> Result<Option<(Pingreq, usize)>, Error> {
+        Ok(Some((Pingreq {}, 0)))
+    }
+}
+
+#[derive(Debug)]
+pub struct Pingresp {}
+impl Pingresp {
+    pub fn new() -> Pingresp {
+        Pingresp {}
+    }
+    pub fn to_buf(&self, buf: &mut BytesMut) {
+        let length_header: u16 = 0b1101_0000_0000_0000;
+        buf.put_u16(length_header);
     }
 }
 
@@ -413,7 +436,7 @@ fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
         return Ok(None);
     } else {
         let byte = src[0];
-        let mut advance = 1;
+        let mut advance = 1; //header's 1byte
         let dup = byte & 0b00001000 == 0b00001000;
         let qos = (byte & 0b00000110) >> 1;
         let retain = byte & 0b00000001 == 0b00000110;
@@ -421,7 +444,7 @@ fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
         // "残りの長さ"の箇所は最大4つ
         for pos in 0..=3 {
             let byte = src[pos + 1];
-            advance += 1;
+            advance += 1; //variable header's length byte
             remaining_length += (byte as usize & 0b0111111) << (pos * 7);
             if (byte & 0b10000000) == 0 {
                 break;
@@ -433,11 +456,13 @@ fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
                 }
             }
         }
+        //上位4ビットを比較
         let mtype = match byte >> 4 {
-            1 => MQTTPacketHeader::Connect,
-            14 => MQTTPacketHeader::Disconnect,
-            3 => MQTTPacketHeader::Publish,
-            8 => MQTTPacketHeader::Subscribe,
+            0b0000_0001 => MQTTPacketHeader::Connect,
+            0b0000_1110 => MQTTPacketHeader::Disconnect,
+            0b0000_0011 => MQTTPacketHeader::Publish,
+            0b0000_1000 => MQTTPacketHeader::Subscribe,
+            0b0000_1100 => MQTTPacketHeader::Pingreq,
             _ => MQTTPacketHeader::Other,
         };
         return Ok(Some((
@@ -448,7 +473,7 @@ fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
                 retain,
                 remaining_length,
             },
-            advance,
+            advance, //minimum=2 (header + res length)
         )));
     }
 }
@@ -480,6 +505,21 @@ impl Decoder for MqttDecoder {
 
                 src.advance(readbyte);
                 match header.mtype {
+                    MQTTPacketHeader::Pingreq => {
+                        let result = Pingreq::from_byte(src);
+                        let (packet, _size) = match result {
+                            Ok(Some((packet, size))) => (packet, size),
+                            Ok(None) => {
+                                return Ok(None);
+                            }
+                            Err(err) => {
+                                self.reset();
+                                return Err(err);
+                            }
+                        };
+                        src.advance(self.realremaining_length);
+                        Ok(Some(MQTTPacket::Pingreq(packet)))
+                    }
                     MQTTPacketHeader::Connect => {
                         //これ以上処理しないので（いまのところ）残りのbyteを破棄する
                         let result = Connect::from_byte(src);
@@ -662,6 +702,7 @@ impl Encoder<MQTTPacket> for MqttEncoder {
             MQTTPacket::Connack(x) => Ok(x.to_buf(buf)),
             MQTTPacket::Suback(x) => Ok(x.to_buf(buf)),
             MQTTPacket::Publish(x) => Ok(x.to_buf(buf)),
+            MQTTPacket::Pingresp(x) => Ok(x.to_buf(buf)),
             _ => {
                 eprintln!("Unexpected Encode packet");
                 Err(Error::new(ErrorKind::Other, "Invalid"))
