@@ -36,7 +36,6 @@ impl TopicFilter {
             for eob in topic.split('/').into_iter().zip_longest(topic_filter) {
                 match eob {
                     itertools::EitherOrBoth::Both(te, tfe) => {
-                        println!("{} vs {}", te, tfe);
                         if tfe == "#" {
                             return Ok(true);
                         }
