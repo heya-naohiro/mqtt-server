@@ -1,6 +1,7 @@
 mod cassandra_store;
 mod connection_store;
 mod mqttcoder;
+mod mqttmatcher;
 mod rpcserver;
 use std::fs::File;
 use std::io::{self, BufReader};
