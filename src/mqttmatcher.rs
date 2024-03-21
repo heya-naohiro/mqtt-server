@@ -53,7 +53,6 @@ impl TopicFilterStore {
             .iter()
             .any(|s| !self.valid(s))
         {
-
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 "Invalid Topicfilter",
