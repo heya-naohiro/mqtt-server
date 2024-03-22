@@ -65,7 +65,6 @@ impl TopicFilterStore {
     pub fn topic_match(&mut self, topic: String) -> std::io::Result<bool> {
         for topic_filter in self.elements.iter() {
             let mut matched = true;
-
             for eob in topic
                 .split('/')
                 .into_iter()
