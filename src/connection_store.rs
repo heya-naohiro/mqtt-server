@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 pub type ConnectionStateDB = Arc<Mutex<HashMap<ConnectionKey, ConnectInfo>>>;
+//pub type SubscriptionStateDB = Arc<Mutex<HashMap<Filter, SubscriptionInfo>>>;
 type ConnectionKey = String; /* may be mqtt id or Common name */
 use tokio::sync::Mutex;
 

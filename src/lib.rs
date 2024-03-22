@@ -49,14 +49,12 @@ type ServerResult<T> = Result<T, Box<dyn Error>>;
 pub struct ConnectInfo {
     pub connect: mqttcoder::Connect,
     pub sender: mpsc::Sender<MQTTPacket>,
-    pub sub_filters: Vec<Subfilter>,
 }
 impl ConnectInfo {
     pub fn new(connect: mqttcoder::Connect, sender: mpsc::Sender<MQTTPacket>) -> ConnectInfo {
         ConnectInfo {
             connect,
             sender,
-            sub_filters: vec![],
             // [TODO] handover sub_filters if clean session is false ?
         }
     }
