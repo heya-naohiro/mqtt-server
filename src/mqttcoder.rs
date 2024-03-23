@@ -3,6 +3,8 @@ use bytes::BufMut;
 use bytes::BytesMut;
 use std::io::{Error, ErrorKind};
 use tokio_util::codec::{Decoder, Encoder};
+use tracing;
+use tracing::{debug, error, info, trace, warn};
 
 #[derive(Debug)]
 pub enum MQTTPacket {
@@ -43,6 +45,7 @@ pub struct Connack {
     return_code: u8,
 }
 impl Connack {
+    #[tracing::instrument(level = "trace")]
     pub fn new() -> Connack {
         // [TODO] Implement actual operation and return code
         Connack {
@@ -50,7 +53,7 @@ impl Connack {
             return_code: 0,
         }
     }
-
+    #[tracing::instrument(level = "trace")]
     pub fn to_buf(&self, buf: &mut BytesMut) {
         let header: u8 = 0b00100000;
         let length: u8 = 2;
@@ -68,6 +71,7 @@ impl Connack {
 #[derive(Debug)]
 pub struct Pingreq {}
 impl Pingreq {
+    #[tracing::instrument(level = "trace")]
     pub fn from_byte(_buf: &mut BytesMut) -> Result<Option<(Pingreq, usize)>, Error> {
         Ok(Some((Pingreq {}, 0)))
     }
@@ -76,9 +80,11 @@ impl Pingreq {
 #[derive(Debug)]
 pub struct Pingresp {}
 impl Pingresp {
+    #[tracing::instrument(level = "trace")]
     pub fn new() -> Pingresp {
         Pingresp {}
     }
+    #[tracing::instrument(level = "trace")]
     pub fn to_buf(&self, buf: &mut BytesMut) {
         let length_header: u16 = 0b1101_0000_0000_0000;
         buf.put_u16(length_header);
@@ -92,6 +98,7 @@ pub struct Suback {
 }
 impl Suback {
     // [TODO] all qos 0 now
+    #[tracing::instrument(level = "trace")]
     pub fn new(message_id: u16, sublength: usize) -> Suback {
         // [TODO] Implement actual operation and return code
         Suback {
@@ -99,7 +106,7 @@ impl Suback {
             sublength,
         }
     }
-
+    #[tracing::instrument(level = "trace")]
     pub fn to_buf(&self, buf: &mut BytesMut) {
         let header: u8 = 0b10010000;
         let remain_length: usize = 2 /* id */+ self.sublength /* qos 1byte * sublen */; // [TODO] multi byte
@@ -132,9 +139,10 @@ pub struct Connect {
 impl Connect {
     // variable header
     // 長さチェック済み
+    #[tracing::instrument(level = "trace")]
     pub fn from_byte(buf: &mut BytesMut) -> Result<Option<(Connect, usize)>, Error> {
         let protocol_name_length = ((buf[0] as usize) << 8) + buf[1] as usize;
-        println!("protocol_name_length: {:?}", protocol_name_length);
+        debug!("protocol_name_length: {:?}", protocol_name_length);
 
         // e.g. MQIsdp v3.1
         let protocolname = if let Ok(str) = std::str::from_utf8(&buf[2..2 + protocol_name_length]) {
@@ -143,12 +151,12 @@ impl Connect {
             return Err(Error::new(ErrorKind::Other, "Invalid"));
         };
 
-        println!("protocolname: {:?}", protocolname);
+        debug!("protocolname: {:?}", protocolname);
         /* [TODO] protocol name check, if invalid close the connection anyway */
 
         let offset = 2 + protocol_name_length;
         let protocol_version = buf[offset];
-        println!("version: {:?}", protocol_version);
+        debug!("version: {:?}", protocol_version);
 
         // Connection Flag bit 1
         let clean_session: bool = ((buf[offset + 1] & 0b00000010) >> 1) == 0b00000001;
@@ -160,7 +168,7 @@ impl Connect {
         let user_name_flag: bool = ((buf[offset + 1] & 0b10000000) >> 7) == 0b00000001;
         // big endian = 上位ビットが先
         let keepalive_timer: u16 = ((buf[offset + 2] as u16) << 8) + buf[offset + 3] as u16;
-        println!("keepalive_timer: {:?}", keepalive_timer);
+        debug!("keepalive_timer: {:?}", keepalive_timer);
 
         // Client Identification , Must have
         let client_id_length = ((buf[offset + 4] as usize) << 8) + buf[offset + 5] as usize;
@@ -239,13 +247,14 @@ pub struct SubscriptionInfo {
 }
 
 impl Subscribe {
+    #[tracing::instrument(level = "trace")]
     pub fn from_byte(buf: &BytesMut) -> Result<Option<(Subscribe, usize)>, Error> {
         if buf.len() < 2 {
             return Ok(None);
         }
-        println!("buf[1]: {:?} buf[0] {:?}", buf[1], buf[0]);
+        debug!("buf[1]: {:?} buf[0] {:?}", buf[1], buf[0]);
         let message_id: u16 = (buf[1] as u16) + ((buf[0] as u16) << 8);
-        println!("message id === {:?}", message_id);
+        debug!("message id === {:?}", message_id);
         Ok(Some((
             Subscribe {
                 message_id,
@@ -254,6 +263,7 @@ impl Subscribe {
             2,
         )))
     }
+    #[tracing::instrument(level = "trace")]
     pub fn payload_from_byte(&mut self, buf: &mut BytesMut, remain: usize) -> Result<usize, Error> {
         // todo remain
         let mut sub_counter: usize = 0;
@@ -269,14 +279,14 @@ impl Subscribe {
                 return Err(Error::new(ErrorKind::Other, "Invalid"));
             };
             sub_counter = sub_counter + topiclength;
-            println!("topic fileter {:?}", topicfilter);
+            debug!("topic fileter {:?}", topicfilter);
 
             let qos = match buf[sub_counter] {
                 0 => 0,
                 1 => 1,
                 2 => 2,
                 value @ _ => {
-                    println!("qos {:?}", value);
+                    debug!("qos {:?}", value);
                     return Err(Error::new(ErrorKind::Other, "Invalid qos "));
                 }
             };
@@ -304,6 +314,7 @@ pub struct Publish {
 }
 
 impl Publish {
+    #[tracing::instrument(level = "trace")]
     pub fn new(topic_name: String, message_id: u32, payload: Vec<u8>) -> Publish {
         Publish {
             topic_name,
@@ -311,6 +322,8 @@ impl Publish {
             payload,
         }
     }
+
+    #[tracing::instrument(level = "trace")]
     fn encode_remaining_length(&self, mut length: usize) -> Vec<u8> {
         let mut remaining_length = Vec::new();
         for _ in 1..5 {
@@ -327,6 +340,7 @@ impl Publish {
         remaining_length
     }
 
+    #[tracing::instrument(level = "trace")]
     pub fn to_buf(&self, buf: &mut BytesMut) {
         // [TOOD] QoS/DUP/Retain, QoS0のみ
         let header: u8 = 0b00110000;
@@ -349,8 +363,9 @@ impl Publish {
         buf.extend_from_slice(&self.payload)
     }
 
+    #[tracing::instrument(level = "trace")]
     pub fn payload_from_byte(&mut self, buf: &mut BytesMut, remain: usize) -> Result<usize, Error> {
-        println!("->>>> {:?}", buf);
+        debug!("->>>> {:?}", buf);
         if buf.len() > remain {
             let added_vec: Vec<u8> = buf[..remain].to_vec();
             self.payload.extend_from_slice(&added_vec);
@@ -361,6 +376,7 @@ impl Publish {
         return Ok(added_vec.len());
     }
 
+    #[tracing::instrument(level = "trace")]
     pub fn from_byte(buf: &mut BytesMut, qos0: bool) -> Result<Option<(Publish, usize)>, Error> {
         // topic length : 2 byte + Message Identification length: 2byte
         if buf.len() < 4 {
@@ -400,6 +416,7 @@ impl Publish {
     }
 }
 
+#[derive(Debug)]
 pub struct MqttDecoder {
     header: Option<Header>,
     packet: Option<MQTTPacket>,
@@ -407,6 +424,7 @@ pub struct MqttDecoder {
 }
 
 impl MqttDecoder {
+    #[tracing::instrument(level = "trace")]
     pub fn new() -> MqttDecoder {
         MqttDecoder {
             header: None,
@@ -414,6 +432,7 @@ impl MqttDecoder {
             realremaining_length: 0,
         }
     }
+    #[tracing::instrument(level = "trace")]
     pub fn reset(&mut self) {
         self.header = None;
         self.packet = None;
@@ -431,6 +450,7 @@ struct Header {
 
 impl Header {}
 
+#[tracing::instrument(level = "trace")]
 fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
     if src.len() < 2 {
         return Ok(None);
@@ -458,11 +478,11 @@ fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
         }
         //上位4ビットを比較
         let mtype = match byte >> 4 {
-            0b0000_0001 => MQTTPacketHeader::Connect,
-            0b0000_1110 => MQTTPacketHeader::Disconnect,
-            0b0000_0011 => MQTTPacketHeader::Publish,
-            0b0000_1000 => MQTTPacketHeader::Subscribe,
-            0b0000_1100 => MQTTPacketHeader::Pingreq,
+            0b0001 => MQTTPacketHeader::Connect,
+            0b1110 => MQTTPacketHeader::Disconnect,
+            0b0011 => MQTTPacketHeader::Publish,
+            0b1000 => MQTTPacketHeader::Subscribe,
+            0b1100 => MQTTPacketHeader::Pingreq,
             _ => MQTTPacketHeader::Other,
         };
         return Ok(Some((
@@ -481,12 +501,14 @@ fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
 impl Decoder for MqttDecoder {
     type Item = MQTTPacket;
     type Error = std::io::Error;
+
+    #[tracing::instrument(level = "trace")]
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        println!("Decode top header ??? {:?}", self.header);
+        debug!("Decode top header ??? {:?}", self.header);
         match &self.header {
             None => {
                 let length = src.len();
-                println!("Length: {:?}", length);
+                debug!("Length: {:?}", length);
                 if src.len() < 2 {
                     return Ok(None);
                 }
@@ -500,8 +522,8 @@ impl Decoder for MqttDecoder {
                 self.realremaining_length = header.remaining_length;
                 // 後にheader.mtypeでパターンマッチするのでここでselfに格納しない
                 //self.header = Some(header);
-                println!("header {:?}", header);
-                println!("fixed header advance {:?} bytes", readbyte);
+                debug!("header {:?}", header);
+                debug!("fixed header advance {:?} bytes", readbyte);
 
                 src.advance(readbyte);
                 match header.mtype {
@@ -534,7 +556,7 @@ impl Decoder for MqttDecoder {
                                 return Err(err);
                             }
                         };
-                        println!("size: {}, length: {}", size, src.len());
+                        debug!("size: {}, length: {}", size, src.len());
                         // [TODO] advanceはheaderベースでやって安全性を高めること下記のように
                         src.advance(self.realremaining_length);
                         self.reset();
@@ -580,15 +602,15 @@ impl Decoder for MqttDecoder {
                                 Err(e) => return Err(e),
                             };
 
-                        println!(
+                        debug!(
                             "variable header advance {:?} bytes, realremaining_length {:?}",
                             readbyte, self.realremaining_length
                         );
-                        println!("variable header {:?}", variable_header_only);
+                        debug!("variable header {:?}", variable_header_only);
                         // [TODO] advanceはheaderベースでやって安全性を高める
                         src.advance(readbyte);
                         // save packet temporary
-                        println!("byte check {:?} {:?}", self.realremaining_length, readbyte);
+                        debug!("byte check {:?} {:?}", self.realremaining_length, readbyte);
                         if self.realremaining_length < readbyte {
                             return Err(Error::new(ErrorKind::Other, "Invalid byte size zbbb"));
                         }
@@ -599,7 +621,7 @@ impl Decoder for MqttDecoder {
                         // process publish packet
                         // 強制的に次のターンに持ち込みpaylodを処理する（残りが何byteであろうと)
                         // 続きを処理しなければならない
-                        println!("next!!!");
+                        debug!("next!!!");
                         Ok(None)
                     }
                     _ => {
@@ -613,7 +635,7 @@ impl Decoder for MqttDecoder {
             Some(header) => match header.mtype {
                 MQTTPacketHeader::Subscribe => match self.packet.take() {
                     Some(MQTTPacket::Subscribe(mut subscribe)) => {
-                        println!("Here ?????????");
+                        debug!("Here ?????????");
                         let readbyte =
                             match subscribe.payload_from_byte(src, self.realremaining_length) {
                                 Ok(value) => value,
@@ -629,7 +651,7 @@ impl Decoder for MqttDecoder {
                         if self.realremaining_length > src.len() {
                             Ok(None)
                         } else {
-                            println!("Packet publish {:?}", subscribe.subscription_list);
+                            debug!("Packet publish {:?}", subscribe.subscription_list);
 
                             // reset for next
                             self.reset();
@@ -637,13 +659,13 @@ impl Decoder for MqttDecoder {
                         }
                     }
                     _ => {
-                        println!("subscribe Second packet not implement {:?}", header.mtype);
+                        debug!("subscribe Second packet not implement {:?}", header.mtype);
                         Err(Error::new(ErrorKind::Other, "Invalid"))
                     }
                 },
                 MQTTPacketHeader::Publish => match self.packet.take() {
                     Some(MQTTPacket::Publish(mut publish)) => {
-                        println!("HERE!!!!!111111");
+                        debug!("HERE!!!!!111111");
                         let readbyte =
                             match publish.payload_from_byte(src, self.realremaining_length) {
                                 Ok(value) => value,
@@ -652,7 +674,7 @@ impl Decoder for MqttDecoder {
                                 }
                             };
                         src.advance(readbyte);
-                        println!("HERE!!!!! {:?}, {:?}", self.realremaining_length, readbyte);
+                        debug!("HERE!!!!! {:?}, {:?}", self.realremaining_length, readbyte);
 
                         if self.realremaining_length < readbyte {
                             return Err(Error::new(ErrorKind::Other, "Invalid byte size AAA"));
@@ -665,7 +687,7 @@ impl Decoder for MqttDecoder {
                             {
                                 let strpayload_check =
                                     String::from_utf8(publish.payload.clone()).unwrap();
-                                println!("Packet publish {:?}", strpayload_check);
+                                debug!("Packet publish {:?}", strpayload_check);
                             }
                             // reset for next
                             self.reset();
@@ -673,12 +695,12 @@ impl Decoder for MqttDecoder {
                         }
                     }
                     _ => {
-                        println!("Error arienai, {:?}, {:x?}", src.len(), src);
+                        debug!("Error arienai, {:?}, {:x?}", src.len(), src);
                         Err(Error::new(ErrorKind::Other, "Invalid"))
                     }
                 },
                 _ => {
-                    println!("Second packet not implement {:?}", header.mtype);
+                    debug!("Second packet not implement {:?}", header.mtype);
                     Err(Error::new(ErrorKind::Other, "Invalid"))
                 }
             },
@@ -686,6 +708,7 @@ impl Decoder for MqttDecoder {
     }
 }
 
+#[derive(Debug)]
 pub struct MqttEncoder {}
 
 impl MqttEncoder {
@@ -697,6 +720,7 @@ impl MqttEncoder {
 impl Encoder<MQTTPacket> for MqttEncoder {
     type Error = std::io::Error;
 
+    #[tracing::instrument(level = "trace")]
     fn encode(&mut self, packet: MQTTPacket, buf: &mut BytesMut) -> Result<(), Self::Error> {
         let res = match packet {
             MQTTPacket::Connack(x) => Ok(x.to_buf(buf)),
@@ -704,7 +728,7 @@ impl Encoder<MQTTPacket> for MqttEncoder {
             MQTTPacket::Publish(x) => Ok(x.to_buf(buf)),
             MQTTPacket::Pingresp(x) => Ok(x.to_buf(buf)),
             _ => {
-                eprintln!("Unexpected Encode packet");
+                error!("Unexpected Encode packet");
                 Err(Error::new(ErrorKind::Other, "Invalid"))
             }
         };
