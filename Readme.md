@@ -29,7 +29,7 @@ cargo build
 ```
 
 ## Payload Storage
-require cassandra
+need cassandra if start with storage mode
 
 ## option
 ```

@@ -160,7 +160,7 @@ pub fn get_args() -> ServerResult<Config> {
                 .value_name("CASSANDRA IPADDR")
                 .short("db_addr")
                 .long("--db_addr")
-                .default_value("127.0.0.1:9042")
+                .default_value("")
                 .required(false)
                 .help("server's address consist of port")
                 .takes_value(true),
@@ -249,25 +249,32 @@ async fn start_main(config: Config) -> io::Result<()> {
 }
 
 pub async fn run_main(config: Config, receiver: oneshot::Receiver<bool>) -> io::Result<()> {
-    let cluster_config = NodeTcpConfigBuilder::new()
-        .with_contact_point(config.cassandra_addr.clone().into())
-        .with_authenticator_provider(Arc::new(NoneAuthenticatorProvider))
-        .build()
-        .await
-        .unwrap();
+    if config.cassandra_addr != "" {
+        let cassandra_cluster_config = NodeTcpConfigBuilder::new()
+            .with_contact_point(config.cassandra_addr.clone().into())
+            .with_authenticator_provider(Arc::new(NoneAuthenticatorProvider))
+            .build()
+            .await
+            .unwrap();
 
-    let lb = RoundRobinLoadBalancingStrategy::new();
-    let session: Arc<cassandra_store::CurrentSession> =
-        Arc::new(TcpSessionBuilder::new(lb, cluster_config).build());
+        let lb = RoundRobinLoadBalancingStrategy::new();
+        let session: Arc<cassandra_store::CurrentSession> =
+            Arc::new(TcpSessionBuilder::new(lb, cassandra_cluster_config).build());
 
-    info!("cassandra session initializing...");
-    let _ = match cassandra_store::CassandraStore::initialize(session).await {
-        Ok(value) => value,
-        Err(e) => {
-            error!("Cassandra Error {:?}", e);
-        }
-    };
-    info!("cassandra session initialize sucess");
+        info!("cassandra session initializing...");
+        let _ = match cassandra_store::CassandraStore::initialize(session).await {
+            Ok(value) => value,
+            Err(e) => {
+                error!("Cassandra Error {:?}", e);
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "cassandra initialize error".to_string(),
+                ));
+            }
+        };
+        info!("cassandra session initialize sucess");
+    }
+
     let c = Arc::new(config);
     let c_clone = Arc::clone(&c);
 
@@ -367,15 +374,19 @@ async fn recv_packet(
        DB Connection
     */
     /* Create Session */
-    let cluster_config = NodeTcpConfigBuilder::new()
-        .with_contact_point(config.cassandra_addr.clone().into())
-        .with_authenticator_provider(Arc::new(NoneAuthenticatorProvider))
-        .build()
-        .await
-        .unwrap();
-    let lb = RoundRobinLoadBalancingStrategy::new();
-    let session: Arc<cassandra_store::CurrentSession> =
-        Arc::new(TcpSessionBuilder::new(lb, cluster_config).build());
+    let mut cassandra_session: Option<Arc<cassandra_store::CurrentSession>> = None;
+    if config.cassandra_addr != "" {
+        let cassandra_cluster_config = NodeTcpConfigBuilder::new()
+            .with_contact_point(config.cassandra_addr.clone().into())
+            .with_authenticator_provider(Arc::new(NoneAuthenticatorProvider))
+            .build()
+            .await
+            .unwrap();
+        let lb = RoundRobinLoadBalancingStrategy::new();
+        cassandra_session = Some(Arc::new(
+            TcpSessionBuilder::new(lb, cassandra_cluster_config).build(),
+        ));
+    }
 
     // 今処理をしているclient id
     let mut client_id: Option<String> = None;
@@ -404,14 +415,23 @@ async fn recv_packet(
                     mqttcoder::MQTTPacket::Publish(packet) => {
                         debug!("Publish {:?}", packet);
                         // [TODO] Data path
-                        if let Err(err) = cassandra_store::CassandraStore::store_published_data(
-                            session.clone(),
-                            packet.clone(),
-                        )
-                        .await
-                        {
-                            error!("Error DB Store Error {:?}", err)
+                        match cassandra_session {
+                            Some(ref s) => {
+                                if let Err(err) =
+                                    cassandra_store::CassandraStore::store_published_data(
+                                        s.clone(),
+                                        packet.clone(),
+                                    )
+                                    .await
+                                {
+                                    error!("Error DB Store Error {:?}", err)
+                                }
+                            }
+                            None => {
+                                // skip
+                            }
                         }
+
                         /* broker send */
                         {
                             let mut subscription_store_guard = subscription_store.lock().await;
