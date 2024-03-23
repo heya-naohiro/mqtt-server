@@ -12,7 +12,7 @@ use cdrs_tokio::load_balancing::RoundRobinLoadBalancingStrategy;
 use clap::{App, Arg};
 use futures::stream::StreamExt;
 use futures::SinkExt;
-use mqttcoder::{MQTTPacket};
+use mqttcoder::MQTTPacket;
 use pki_types::{CertificateDer, PrivateKeyDer};
 use rpcserver::rpcserver::PublishedPacket;
 use rustls::ServerConfig;

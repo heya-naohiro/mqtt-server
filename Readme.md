@@ -21,8 +21,6 @@ graph LR
 
 - The server utilizes tokio's green threads to concurrently handle communication with multiple devices.
 
-- I aim to develop software that communicates as a server with clients, rather than aiming to function as software that communicates with each other like brokers.
-
 - I am currently only implementing QoS0 / MQTTv3.1
 
 ## build
