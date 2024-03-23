@@ -78,6 +78,7 @@ pub struct Config {
     pub serverconfig: ServerConfig,
     pub address: SocketAddr,
     pub cassandra_addr: String,
+    pub brokermode: bool,
 }
 
 #[tracing::instrument(level = "trace")]
@@ -95,25 +96,10 @@ pub fn load_keys(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
 #[tracing::instrument(level = "trace")]
 pub fn run(config: Config) -> ServerResult<()> {
     // log setting
-    /*
-    let subscriber = tracing_subscriber::fmt()
-        .compact()
-        .with_file(true)
-        .with_line_number(true)
-        .with_thread_ids(true)
-        .with_target(false)
-        .finish();
-    */
     tracing_subscriber::fmt()
         .with_max_level(Level::DEBUG)
         .init();
-    //tracing_subscriber::fmt::init();
-    /*
-    if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
-        error!("log set Error {}", e);
-        std::process::exit(1);
-    }
-    */
+
     info!("Hello log world");
     if let Err(err) = start_main(config) {
         return Err(Box::new(err));
@@ -162,8 +148,17 @@ pub fn get_args() -> ServerResult<Config> {
                 .long("--db_addr")
                 .default_value("")
                 .required(false)
-                .help("server's address consist of port")
+                .help("This is the port for Cassandra used to store the latest topics. If not specified, Cassandra will not be used.")
                 .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("non_broker")
+                .value_name("Non Broker mode")
+                .short("nb")
+                .long("--non-broker")
+                .required(false)
+                .help("server start in a mode where communication with clients occurs exclusively via gRPC, not through an MQTT broker, and direct communication between clients is not possible.")
+                .takes_value(false),
         )
         .get_matches();
 
@@ -180,6 +175,7 @@ pub fn get_args() -> ServerResult<Config> {
     } else {
         return Err(format!("address error, invalid format {}", addr).into());
     };
+    let brokermode = !matches.is_present("non_broker");
 
     let cassandra_addr = matches.value_of("cassandra_addr").unwrap();
     let cassandra_addr = cassandra_addr;
@@ -188,6 +184,7 @@ pub fn get_args() -> ServerResult<Config> {
         serverconfig: config,
         address: addr,
         cassandra_addr: cassandra_addr.to_string(),
+        brokermode,
     })
 }
 
@@ -433,7 +430,7 @@ async fn recv_packet(
                         }
 
                         /* broker send */
-                        {
+                        if config.brokermode {
                             let mut subscription_store_guard = subscription_store.lock().await;
 
                             let l = match subscription_store_guard

@@ -24,11 +24,11 @@ fn get_test_config(port: u16) -> mqttserver::Config {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
 
     let cassandraaddr = "127.0.0.1:9042".to_string();
-
     let config = mqttserver::Config {
         serverconfig: config,
         address: addr,
         cassandra_addr: cassandraaddr,
+        brokermode: true,
     };
     return config;
 }
