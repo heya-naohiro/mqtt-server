@@ -14,7 +14,7 @@ pub struct TopicFilterStore<T> {
 
 #[derive(Debug)]
 pub struct SubInfo {
-    topicfilter_elements: Vec<String>,
+    pub topicfilter_elements: Vec<String>,
     pub sender: Option<mpsc::Sender<mqttcoder::MQTTPacket>>,
 }
 
@@ -42,6 +42,7 @@ impl<T: TopicFilter> TopicFilterStore<T> {
     }
 
     pub fn register_topicfilter(&mut self, topicfilter: T) -> std::io::Result<()> {
+        println!("regitee!!!!!!!!!");
         if topicfilter
             .get_topic_filter()
             .iter()
@@ -52,12 +53,19 @@ impl<T: TopicFilter> TopicFilterStore<T> {
                 "Invalid Topicfilter",
             ));
         }
+        println!("pushed");
         self.elements.push(topicfilter);
+        println!("regitee!!!!!!!!! --- end ");
         Ok(())
     }
 
     pub fn get_topicfilter(&mut self, topic: &String) -> std::io::Result<Vec<&T>> {
         let mut ret = vec![];
+        println!(
+            "get topic filter {:?} vs list {:?}",
+            topic,
+            &self.elements.len()
+        );
         for topic_filter in &self.elements {
             let mut matched = true;
 
@@ -69,7 +77,7 @@ impl<T: TopicFilter> TopicFilterStore<T> {
                 match eob {
                     itertools::EitherOrBoth::Both(te, tfe) => {
                         if tfe == "#" {
-                            ret.push(topic_filter);
+                            matched = true;
                             break;
                         }
                         if te != tfe && tfe != "+" {
@@ -92,6 +100,7 @@ impl<T: TopicFilter> TopicFilterStore<T> {
                 }
             }
             if matched {
+                println!("matcheddd push !!!!");
                 ret.push(topic_filter);
             }
             // check next filter

@@ -189,6 +189,8 @@ async fn handle_device_connection(
     let server_config = config.serverconfig.clone();
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
     let listener = TcpListener::bind(config.address).await.unwrap();
+    let subscription_store = Arc::new(Mutex::new(topicfilter::TopicFilterStore::new()));
+
     println!("handle connection");
     loop {
         println!("handle connection1");
@@ -197,9 +199,17 @@ async fn handle_device_connection(
         let config = config.clone();
         let sender = sender.clone();
         let connection_map = connection_map.clone();
+        let subscription_store = subscription_store.clone();
         tokio::spawn(async move {
-            if let Err(err) =
-                process_connection(&mut stream, acceptor, config, sender, connection_map).await
+            if let Err(err) = process_connection(
+                &mut stream,
+                acceptor,
+                config,
+                sender,
+                connection_map,
+                subscription_store,
+            )
+            .await
             {
                 println!("Error process from {:?}, err {:?}", addr, err);
             }
@@ -287,11 +297,11 @@ async fn process_connection(
     config: Arc<Config>,
     sender: broadcast::Sender<PublishedPacket>,
     connection_map: connection_store::ConnectionStateDB,
+    subscription_store: SubscriptionsDB,
 ) -> io::Result<()> {
     // Subscrptionの共有
     println!("Process Connection");
 
-    let subscription_store = Arc::new(Mutex::new(topicfilter::TopicFilterStore::new()));
     if let Err(err) = process(
         socket,
         acceptor,
@@ -390,9 +400,13 @@ async fn recv_packet(
                         {
                             eprintln!("Error DB Store Error {:?}", err)
                         }
+                        println!("Cassandra end Packet {:?}", packet);
                         /* broker send */
                         {
+                            println!("Subscription store will lock {:?}", packet);
                             let mut subscription_store = subscription_store.lock().await;
+                            println!("Subscription store will locked {:?}", packet);
+
                             let l = match subscription_store.get_topicfilter(&packet.topic_name) {
                                 Err(err) => {
                                     eprintln!("Error broker get topic {}", err);
@@ -400,11 +414,18 @@ async fn recv_packet(
                                 }
                                 Ok(r) => r,
                             };
+                            println!("matched topic filter {:?}, {:?}", l, l.len());
+
                             for s in l {
+                                println!(
+                                    "broker: publish packet match {:?}",
+                                    s.topicfilter_elements
+                                );
                                 match &s.sender {
                                     Some(sender) => {
                                         // [TODO] Error handling, cache handling...
                                         // packet copy on memory for multi subscribers
+                                        println!("broker: publish packet {:?}", packet);
                                         if let Err(err) =
                                             sender.send(MQTTPacket::Publish(packet.clone())).await
                                         {
@@ -417,6 +438,7 @@ async fn recv_packet(
                                     None => eprintln!("Error: Not Exist sender"),
                                 }
                             }
+                            println!("get send all end");
                         }
 
                         /* user send */
@@ -439,10 +461,15 @@ async fn recv_packet(
                         {
                             let mut subscription_store = subscription_store.lock().await;
                             for packet in &packet.subscription_list {
-                                subscription_store.register_topicfilter(topicfilter::SubInfo::new(
-                                    packet.topicfilter.clone(),
-                                    Some(tx.clone()),
-                                ));
+                                println!("Register topic filter");
+                                if let Err(err) = subscription_store.register_topicfilter(
+                                    topicfilter::SubInfo::new(
+                                        packet.topicfilter.clone(),
+                                        Some(tx.clone()),
+                                    ),
+                                ) {
+                                    eprint!("Error subscription {:?}", err);
+                                }
                             }
                         }
 
