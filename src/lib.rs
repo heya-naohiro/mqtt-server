@@ -41,9 +41,6 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-type ConnectionStateDB = Arc<Mutex<HashMap<ConnectionKey, ConnectInfo>>>;
-type ConnectionKey = String; /* may be mqtt id or Common name */
-
 type ServerResult<T> = Result<T, Box<dyn Error>>;
 type SubscriptionsDB = Arc<Mutex<topicfilter::TopicFilterStore<topicfilter::SubInfo>>>;
 
@@ -369,6 +366,8 @@ async fn recv_packet(
     let session: Arc<cassandra_store::CurrentSession> =
         Arc::new(TcpSessionBuilder::new(lb, cluster_config).build());
 
+    // 今処理をしているclient id
+    let mut client_id: Option<String> = None;
     while let Some(frame) = frame_reader.next().await {
         match frame {
             Ok(data) => {
@@ -379,11 +378,13 @@ async fn recv_packet(
                         /* Store Hashmap */
                         let mut cmap = connection_map.lock().await;
                         /* [TODO] Need Check Client id already exist, close previous session  */
+                        let client_id_2 = packet.client_id.clone();
+
                         cmap.insert(
                             packet.client_id.clone(),
                             connection_store::ConnectInfo::new(packet, tx.clone()),
                         );
-
+                        client_id = Some(client_id_2);
                         let packet = mqttcoder::Connack::new();
                         if let Err(err) = tx.send(mqttcoder::MQTTPacket::Connack(packet)).await {
                             return Err(io::Error::new(io::ErrorKind::Other, err));
@@ -400,35 +401,29 @@ async fn recv_packet(
                         {
                             eprintln!("Error DB Store Error {:?}", err)
                         }
-                        println!("Cassandra end Packet {:?}", packet);
                         /* broker send */
                         {
-                            println!("Subscription store will lock {:?}", packet);
-                            let mut subscription_store = subscription_store.lock().await;
-                            println!("Subscription store will locked {:?}", packet);
+                            let mut subscription_store_guard = subscription_store.lock().await;
 
-                            let l = match subscription_store.get_topicfilter(&packet.topic_name) {
+                            let l = match subscription_store_guard
+                                .get_topicfilter(&packet.topic_name)
+                            {
                                 Err(err) => {
                                     eprintln!("Error broker get topic {}", err);
                                     return Err(err);
                                 }
                                 Ok(r) => r,
                             };
-                            println!("matched topic filter {:?}, {:?}", l, l.len());
 
+                            let mut garbage_ids = vec![];
                             for s in l {
-                                println!(
-                                    "broker: publish packet match {:?}",
-                                    s.topicfilter_elements
-                                );
                                 match &s.sender {
                                     Some(sender) => {
-                                        // [TODO] Error handling, cache handling...
                                         // packet copy on memory for multi subscribers
-                                        println!("broker: publish packet {:?}", packet);
                                         if let Err(err) =
                                             sender.send(MQTTPacket::Publish(packet.clone())).await
                                         {
+                                            garbage_ids.push(s.client_id.clone());
                                             eprintln!(
                                                 "Error send publilsh packet device broker {}",
                                                 err
@@ -438,7 +433,10 @@ async fn recv_packet(
                                     None => eprintln!("Error: Not Exist sender"),
                                 }
                             }
-                            println!("get send all end");
+                            // remove pipe broken subscriber
+                            for gid in garbage_ids {
+                                subscription_store_guard.remove_subscription(&gid);
+                            }
                         }
 
                         /* user send */
@@ -455,6 +453,20 @@ async fn recv_packet(
                     }
                     mqttcoder::MQTTPacket::Disconnect => {
                         // disconnect
+                        // gracefull shutdown
+                        let mut subscription_store = subscription_store.lock().await;
+
+                        let client_id = match client_id {
+                            Some(ref client_id) => client_id,
+                            None => {
+                                eprint!("Client id is not found");
+                                return Err(io::Error::new(
+                                    io::ErrorKind::Other,
+                                    "Client id is not found",
+                                ));
+                            }
+                        };
+                        subscription_store.remove_subscription(client_id);
                         break;
                     }
                     mqttcoder::MQTTPacket::Subscribe(packet) => {
@@ -462,11 +474,25 @@ async fn recv_packet(
                             let mut subscription_store = subscription_store.lock().await;
                             for packet in &packet.subscription_list {
                                 println!("Register topic filter");
+                                // client_id check
+                                let client_id = match client_id {
+                                    Some(ref client_id) => client_id,
+                                    None => {
+                                        eprint!("Client id is not found");
+                                        return Err(io::Error::new(
+                                            io::ErrorKind::Other,
+                                            "Client id is not found",
+                                        ));
+                                    }
+                                };
+
                                 if let Err(err) = subscription_store.register_topicfilter(
                                     topicfilter::SubInfo::new(
                                         packet.topicfilter.clone(),
                                         Some(tx.clone()),
+                                        client_id.to_string(),
                                     ),
+                                    client_id.to_string(),
                                 ) {
                                     eprint!("Error subscription {:?}", err);
                                 }

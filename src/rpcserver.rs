@@ -3,7 +3,7 @@ use crate::mqttcoder::Publish;
 use crate::rpcserver::rpcserver::published_packet_service_server::PublishedPacketService;
 use crate::MQTTPacket;
 
-use rpcserver::{PublishedPacket};
+use rpcserver::PublishedPacket;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
@@ -89,7 +89,6 @@ impl PublishedPacketService for PlatformPublishedPacketService {
                 }
             }
         }
-
 
         let reply = rpcserver::PublishResponse {
             code: "Success".into(),
