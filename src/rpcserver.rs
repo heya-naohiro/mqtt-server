@@ -2,13 +2,14 @@ use crate::connection_store;
 use crate::mqttcoder::Publish;
 use crate::rpcserver::rpcserver::published_packet_service_server::PublishedPacketService;
 use crate::MQTTPacket;
-
 use rpcserver::PublishedPacket;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_stream::wrappers::ReceiverStream;
+use tracing;
+use tracing::{debug, error, info, trace, warn};
 
 use tonic::{Request, Response, Status};
 
@@ -42,20 +43,21 @@ impl PublishedPacketService for PlatformPublishedPacketService {
     //  expected enum `std::result::Result<tonic::Response<ReceiverStream<std::result::Result<PublishedPacket, Status>>>, Status>`
 
     /* Device -> Server -> gRPCクライアントにStream */
+    #[tracing::instrument(level = "trace")]
     async fn stream_published_payload(
         &self,
         request: Request<rpcserver::PublishedPacketRequest>,
     ) -> Result<Response<Self::StreamPublishedPayloadStream>, Status> {
-        println!("Request PublishedPacket = {:?}", request);
+        info!("Streaming Request {:?}", request);
 
         let (tx, rx) = mpsc::channel(4);
         let receiver_clone = Arc::clone(&self.reciever);
         tokio::spawn(async move {
-            println!("RPC Service Daemon Start");
+            info!("Streaming RPC Service Daemon Start");
 
             loop {
                 let packet = receiver_clone.lock().await.recv().await.unwrap();
-                println!("Daemon {:?}", packet);
+                info!("Streaming Daemon {:?}", packet);
                 tx.send(Ok(packet)).await.unwrap();
             }
         });
@@ -64,11 +66,12 @@ impl PublishedPacketService for PlatformPublishedPacketService {
     }
 
     /* gRPCクライアント -> Server -> Device に 1 packet Push */
+    #[tracing::instrument(level = "trace")]
     async fn publish_payload_to_device(
         &self,
         request: Request<rpcserver::PublishRequest>,
     ) -> Result<Response<rpcserver::PublishResponse>, Status> {
-        println!("Publish Request {:?}", request);
+        info!("Publish Request {:?}", request);
         let cmap = self.connection_map.lock().await;
 
         let req = request.into_inner().to_owned();
@@ -81,11 +84,11 @@ impl PublishedPacketService for PlatformPublishedPacketService {
             match info {
                 Some(i) => {
                     if let Err(err) = i.sender.send(MQTTPacket::Publish(send_mqtt_packet)).await {
-                        println!("Publish error {:?}", err);
+                        error!("Publish error {:?}", err);
                     }
                 }
                 None => {
-                    println!("Not Found sender");
+                    error!("Not Found sender");
                 }
             }
         }

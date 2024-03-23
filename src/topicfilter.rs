@@ -1,9 +1,12 @@
 use crate::mqttcoder;
-
 use itertools::Itertools;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use tokio::sync::mpsc;
+use tracing;
+use tracing::{debug, error, info, trace, warn};
 
+#[derive(Debug)]
 pub struct TopicFilterStore<T> {
     elements: HashMap<String, Vec<T>>,
 }
@@ -38,17 +41,19 @@ pub trait TopicFilter {
     fn get_topic_filter(&self) -> &Vec<String>;
 }
 
-impl<T: TopicFilter> TopicFilterStore<T> {
+impl<T: TopicFilter + Debug> TopicFilterStore<T> {
     pub fn new() -> Self {
         return TopicFilterStore {
             elements: HashMap::new(),
         };
     }
 
+    #[tracing::instrument(level = "trace")]
     pub fn remove_subscription(&mut self, id: &String) {
         self.elements.remove(id);
     }
 
+    #[tracing::instrument(level = "trace")]
     pub fn register_topicfilter(&mut self, topicfilter: T, id: String) -> std::io::Result<()> {
         if topicfilter
             .get_topic_filter()
@@ -68,9 +73,10 @@ impl<T: TopicFilter> TopicFilterStore<T> {
         Ok(())
     }
 
+    #[tracing::instrument(level = "trace")]
     pub fn get_topicfilter(&mut self, topic: &String) -> std::io::Result<Vec<&T>> {
         let mut ret = vec![];
-        println!(
+        trace!(
             "get topic filter {:?} vs list {:?}",
             topic,
             &self.elements.len()
@@ -110,7 +116,7 @@ impl<T: TopicFilter> TopicFilterStore<T> {
                     }
                 }
                 if matched {
-                    println!("matcheddd push !!!!");
+                    debug!("topic matched, so push {:?}", topic_filter);
                     ret.push(topic_filter);
                 }
                 // check next filter
@@ -119,6 +125,8 @@ impl<T: TopicFilter> TopicFilterStore<T> {
 
         return Ok(ret);
     }
+
+    #[tracing::instrument(level = "trace")]
     fn valid(&self, element: &str) -> bool {
         if "#" == element || "+" == element || "" == element {
             return true;

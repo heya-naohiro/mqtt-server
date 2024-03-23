@@ -1,6 +1,6 @@
 mod cassandra_store;
 mod connection_store;
-
+use tracing;
 mod mqttcoder;
 mod rpcserver;
 mod topicfilter;
@@ -29,6 +29,8 @@ use tonic::transport::Server;
 //use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::rpcserver::rpcserver::published_packet_service_server::PublishedPacketServiceServer;
 use tokio::sync::broadcast;
+use tracing::Level;
+use tracing::{debug, error, info, trace, warn};
 
 use cdrs_tokio::authenticators::NoneAuthenticatorProvider;
 
@@ -78,10 +80,11 @@ pub struct Config {
     pub cassandra_addr: String,
 }
 
+#[tracing::instrument(level = "trace")]
 pub fn load_certs(path: &Path) -> io::Result<Vec<CertificateDer<'static>>> {
     certs(&mut BufReader::new(File::open(path)?)).collect()
 }
-
+#[tracing::instrument(level = "trace")]
 pub fn load_keys(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
     rsa_private_keys(&mut BufReader::new(File::open(path)?))
         .next()
@@ -89,14 +92,36 @@ pub fn load_keys(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
         .map(Into::into)
 }
 
+#[tracing::instrument(level = "trace")]
 pub fn run(config: Config) -> ServerResult<()> {
-    // not use now, for test only
+    // log setting
+    /*
+    let subscriber = tracing_subscriber::fmt()
+        .compact()
+        .with_file(true)
+        .with_line_number(true)
+        .with_thread_ids(true)
+        .with_target(false)
+        .finish();
+    */
+    tracing_subscriber::fmt()
+        .with_max_level(Level::DEBUG)
+        .init();
+    //tracing_subscriber::fmt::init();
+    /*
+    if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
+        error!("log set Error {}", e);
+        std::process::exit(1);
+    }
+    */
+    info!("Hello log world");
     if let Err(err) = start_main(config) {
         return Err(Box::new(err));
     };
     Ok(())
 }
 
+#[tracing::instrument(level = "trace")]
 pub fn get_args() -> ServerResult<Config> {
     let matches = App::new("mqtt-server")
         .version("0.0.0")
@@ -166,6 +191,7 @@ pub fn get_args() -> ServerResult<Config> {
     })
 }
 
+#[tracing::instrument(level = "trace")]
 async fn handle_user_connection(
     reciever: broadcast::Receiver<PublishedPacket>,
     connection_map: connection_store::ConnectionStateDB,
@@ -188,9 +214,8 @@ async fn handle_device_connection(
     let listener = TcpListener::bind(config.address).await.unwrap();
     let subscription_store = Arc::new(Mutex::new(topicfilter::TopicFilterStore::new()));
 
-    println!("handle connection");
+    info!("MQTT TCP Listener Running");
     loop {
-        println!("handle connection1");
         let (mut stream, addr) = listener.accept().await.unwrap();
         let acceptor = acceptor.clone();
         let config = config.clone();
@@ -208,29 +233,15 @@ async fn handle_device_connection(
             )
             .await
             {
-                println!("Error process from {:?}, err {:?}", addr, err);
+                error!("Error process from {:?}, err {:?}", addr, err);
             }
         });
-        /*
-        if let Err(err) = process_connection(
-            &mut stream,
-            acceptor,
-            config.clone(),
-            sender.clone(),
-            connection_map.clone(),
-        )
-        .await
-        {
-            println!("Error process from {:?}, err {:?}", addr, err);
-        } else {
-            println!("Shutdown process from {:?} Successfully", addr);
-        }
-        */
     }
 }
 
 #[tokio::main]
 async fn start_main(config: Config) -> io::Result<()> {
+    info!("start tokio main");
     let (mut sender, receiver) = oneshot::channel::<bool>();
     let _ = tokio::spawn(run_main(config, receiver)).await;
     sender.closed().await;
@@ -238,43 +249,43 @@ async fn start_main(config: Config) -> io::Result<()> {
 }
 
 pub async fn run_main(config: Config, receiver: oneshot::Receiver<bool>) -> io::Result<()> {
-    println!("Run main");
-
     let cluster_config = NodeTcpConfigBuilder::new()
         .with_contact_point(config.cassandra_addr.clone().into())
         .with_authenticator_provider(Arc::new(NoneAuthenticatorProvider))
         .build()
         .await
         .unwrap();
-    println!("Run main 2");
 
     let lb = RoundRobinLoadBalancingStrategy::new();
     let session: Arc<cassandra_store::CurrentSession> =
         Arc::new(TcpSessionBuilder::new(lb, cluster_config).build());
+
+    info!("cassandra session initializing...");
     let _ = match cassandra_store::CassandraStore::initialize(session).await {
         Ok(value) => value,
         Err(e) => {
-            println!("Cassandra Error {:?}", e);
+            error!("Cassandra Error {:?}", e);
         }
     };
+    info!("cassandra session initialize sucess");
     let c = Arc::new(config);
     let c_clone = Arc::clone(&c);
-    println!("Run main3");
 
     // Connection Informationの共有
     let connection_db = Arc::new(Mutex::new(HashMap::new()));
     let connection_db_2 = connection_db.clone();
     // mqttとgRPCをつなぐ
     let (s, r) = broadcast::channel::<PublishedPacket>(10);
+    info!("mqtt server start");
     {
         tokio::select! {
             d = receiver => {
                 match d {
                     Ok(_) => {
-                        println!("Recieve Stop Signal {:?}", d)
+                        info!("Recieve Stop Signal {:?}", d)
                     }
                     Err(err) => {
-                        println!("Recieve Stop Signal {:?}", err)
+                        warn!("Recieve Stop Signal {:?}", err)
                     }
                 }
             },
@@ -297,8 +308,6 @@ async fn process_connection(
     subscription_store: SubscriptionsDB,
 ) -> io::Result<()> {
     // Subscrptionの共有
-    println!("Process Connection");
-
     if let Err(err) = process(
         socket,
         acceptor,
@@ -309,17 +318,18 @@ async fn process_connection(
     )
     .await
     {
-        println!("Error process from err {:?}", err);
+        error!("Error process from err {:?}", err);
         socket.shutdown().await?;
         return Err(err);
     } else {
-        println!("Shutdown process from Successfully");
+        debug!("Shutdown process from Successfully");
         socket.flush().await?;
         socket.shutdown().await?;
     }
     return Ok(());
 }
 
+#[tracing::instrument(level = "trace")]
 async fn send_packet(
     mut frame_writer: FramedWrite<
         WriteHalf<tokio_rustls::server::TlsStream<&mut TcpStream>>,
@@ -331,16 +341,17 @@ async fn send_packet(
         let result = frame_writer.send(packet).await;
         match result {
             Ok(_) => {
-                println!("Success Send Packet")
+                debug!("Success Send Packet")
             }
             Err(err) => {
-                eprintln!("Error Send Packet {:?}", err)
+                error!("Error Send Packet {:?}", err)
             }
         }
     }
     return Ok(());
 }
 
+#[tracing::instrument(level = "trace")]
 async fn recv_packet(
     mut frame_reader: FramedRead<
         ReadHalf<tokio_rustls::server::TlsStream<&mut TcpStream>>,
@@ -371,10 +382,10 @@ async fn recv_packet(
     while let Some(frame) = frame_reader.next().await {
         match frame {
             Ok(data) => {
-                println!("received: {:?}", data);
+                debug!("received: {:?}", data);
                 match data {
                     mqttcoder::MQTTPacket::Connect(packet) => {
-                        println!("Connect");
+                        debug!("Connect {:?}", packet);
                         /* Store Hashmap */
                         let mut cmap = connection_map.lock().await;
                         /* [TODO] Need Check Client id already exist, close previous session  */
@@ -391,7 +402,7 @@ async fn recv_packet(
                         }
                     }
                     mqttcoder::MQTTPacket::Publish(packet) => {
-                        println!("Publish Packet {:?}", packet);
+                        debug!("Publish {:?}", packet);
                         // [TODO] Data path
                         if let Err(err) = cassandra_store::CassandraStore::store_published_data(
                             session.clone(),
@@ -399,7 +410,7 @@ async fn recv_packet(
                         )
                         .await
                         {
-                            eprintln!("Error DB Store Error {:?}", err)
+                            error!("Error DB Store Error {:?}", err)
                         }
                         /* broker send */
                         {
@@ -409,7 +420,7 @@ async fn recv_packet(
                                 .get_topicfilter(&packet.topic_name)
                             {
                                 Err(err) => {
-                                    eprintln!("Error broker get topic {}", err);
+                                    error!("Error broker get topic {}", err);
                                     return Err(err);
                                 }
                                 Ok(r) => r,
@@ -424,13 +435,13 @@ async fn recv_packet(
                                             sender.send(MQTTPacket::Publish(packet.clone())).await
                                         {
                                             garbage_ids.push(s.client_id.clone());
-                                            eprintln!(
+                                            error!(
                                                 "Error send publilsh packet device broker {}",
                                                 err
                                             );
                                         }
                                     }
-                                    None => eprintln!("Error: Not Exist sender"),
+                                    None => error!("Error: Not Exist sender"),
                                 }
                             }
                             // remove pipe broken subscriber
@@ -447,11 +458,12 @@ async fn recv_packet(
                         };
                         let result = sender.send(send_packet);
                         match result {
-                            Err(err) => eprintln!("Packet broadcast Error {}", err),
-                            Ok(size) => println!("Packet broadcast OK {}", size),
+                            Err(err) => error!("Packet broadcast Error {}", err),
+                            Ok(size) => trace!("Packet broadcast OK {}", size),
                         }
                     }
                     mqttcoder::MQTTPacket::Disconnect => {
+                        debug!("Disconnect");
                         // disconnect
                         // gracefull shutdown
                         let mut subscription_store = subscription_store.lock().await;
@@ -459,7 +471,7 @@ async fn recv_packet(
                         let client_id = match client_id {
                             Some(ref client_id) => client_id,
                             None => {
-                                eprint!("Client id is not found");
+                                error!("Client id is not found");
                                 return Err(io::Error::new(
                                     io::ErrorKind::Other,
                                     "Client id is not found",
@@ -470,15 +482,15 @@ async fn recv_packet(
                         break;
                     }
                     mqttcoder::MQTTPacket::Subscribe(packet) => {
+                        debug!("Subscribe {:?}", packet);
                         {
                             let mut subscription_store = subscription_store.lock().await;
                             for packet in &packet.subscription_list {
-                                println!("Register topic filter");
                                 // client_id check
                                 let client_id = match client_id {
                                     Some(ref client_id) => client_id,
                                     None => {
-                                        eprint!("Client id is not found");
+                                        error!("Client id is not found");
                                         return Err(io::Error::new(
                                             io::ErrorKind::Other,
                                             "Client id is not found",
@@ -494,7 +506,7 @@ async fn recv_packet(
                                     ),
                                     client_id.to_string(),
                                 ) {
-                                    eprint!("Error subscription {:?}", err);
+                                    error!("Error subscription {:?}", err);
                                 }
                             }
                         }
@@ -509,19 +521,18 @@ async fn recv_packet(
                         };
                     }
                     mqttcoder::MQTTPacket::Pingreq(_packet) => {
+                        debug!("Ping {:?}", _packet);
                         // ping / pingresp
-                        println!("Recv Ping req");
                         let packet = mqttcoder::Pingresp::new();
                         if let Err(err) = tx.send(mqttcoder::MQTTPacket::Pingresp(packet)).await {
                             return Err(io::Error::new(io::ErrorKind::Other, err));
                         };
-                        println!("Ping res");
                     }
 
                     _ => {}
                 }
             }
-            Err(err) => eprintln!("error: {:?}", err),
+            Err(err) => error!("error: {:?}", err),
         }
     }
     return Ok(());
@@ -535,7 +546,6 @@ async fn process(
     connection_map: connection_store::ConnectionStateDB,
     subscription_map: SubscriptionsDB,
 ) -> io::Result<()> {
-    println!("process");
     let socket = match acceptor.accept(socket).await {
         Ok(value) => value,
         Err(error) => {
