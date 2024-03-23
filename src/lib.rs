@@ -1,5 +1,6 @@
 mod cassandra_store;
 mod connection_store;
+
 mod mqttcoder;
 mod rpcserver;
 mod topicfilter;
@@ -44,6 +45,7 @@ type ConnectionStateDB = Arc<Mutex<HashMap<ConnectionKey, ConnectInfo>>>;
 type ConnectionKey = String; /* may be mqtt id or Common name */
 
 type ServerResult<T> = Result<T, Box<dyn Error>>;
+type SubscriptionsDB = Arc<Mutex<topicfilter::TopicFilterStore<topicfilter::SubInfo>>>;
 
 #[derive(Debug)]
 pub struct ConnectInfo {
@@ -244,22 +246,24 @@ pub async fn run_main(config: Config, receiver: oneshot::Receiver<bool>) -> io::
     let connection_db_2 = connection_db.clone();
     // mqttとgRPCをつなぐ
     let (s, r) = broadcast::channel::<PublishedPacket>(10);
-    tokio::select! {
-        d = receiver => {
-            match d {
-                Ok(_) => {
-                    println!("Recieve Stop Signal {:?}", d)
+    {
+        tokio::select! {
+            d = receiver => {
+                match d {
+                    Ok(_) => {
+                        println!("Recieve Stop Signal {:?}", d)
+                    }
+                    Err(err) => {
+                        println!("Recieve Stop Signal {:?}", err)
+                    }
                 }
-                Err(err) => {
-                    println!("Recieve Stop Signal {:?}", err)
-                }
-            }
-        },
-        _ = handle_device_connection(c_clone, s, connection_db) => {
-        },
-        _ = handle_user_connection(r, connection_db_2) => {
+            },
+            _ = handle_device_connection(c_clone, s, connection_db) => {
+            },
+            _ = handle_user_connection(r, connection_db_2) => {
 
-        },
+            },
+        }
     }
     return Ok(());
 }
@@ -271,7 +275,19 @@ async fn process_connection(
     sender: broadcast::Sender<PublishedPacket>,
     connection_map: connection_store::ConnectionStateDB,
 ) -> io::Result<()> {
-    if let Err(err) = process(socket, acceptor, config, sender, connection_map).await {
+    // Subscrptionの共有
+    let subscription_store = Arc::new(Mutex::new(topicfilter::TopicFilterStore::new()));
+
+    if let Err(err) = process(
+        socket,
+        acceptor,
+        config,
+        sender,
+        connection_map,
+        subscription_store,
+    )
+    .await
+    {
         println!("Error process from err {:?}", err);
         socket.shutdown().await?;
         return Err(err);
@@ -313,6 +329,7 @@ async fn recv_packet(
     tx: mpsc::Sender<MQTTPacket>,
     config: Arc<Config>,
     sender: broadcast::Sender<PublishedPacket>,
+    subscription_store: SubscriptionsDB,
 ) -> io::Result<()> {
     /*
        DB Connection
@@ -359,6 +376,35 @@ async fn recv_packet(
                         {
                             eprintln!("Error DB Store Error {:?}", err)
                         }
+                        /* broker send */
+                        {
+                            let mut subscription_store = subscription_store.lock().await;
+                            let l = match subscription_store.get_topicfilter(&packet.topic_name) {
+                                Err(err) => {
+                                    eprintln!("Error broker get topic {}", err);
+                                    return Err(err);
+                                }
+                                Ok(r) => r,
+                            };
+                            for s in l {
+                                match &s.sender {
+                                    Some(sender) => {
+                                        // [TODO] Error handling, cache handling...
+                                        // packet copy on memory for multi subscribers
+                                        if let Err(err) =
+                                            sender.send(MQTTPacket::Publish(packet.clone())).await
+                                        {
+                                            eprintln!(
+                                                "Error send publilsh packet device broker {}",
+                                                err
+                                            );
+                                        }
+                                    }
+                                    None => eprintln!("Error: Not Exist sender"),
+                                }
+                            }
+                        }
+
                         /* user send */
                         let send_packet = PublishedPacket {
                             device_id: "device".to_string(),
@@ -376,6 +422,16 @@ async fn recv_packet(
                         break;
                     }
                     mqttcoder::MQTTPacket::Subscribe(packet) => {
+                        {
+                            let mut subscription_store = subscription_store.lock().await;
+                            for packet in &packet.subscription_list {
+                                subscription_store.register_topicfilter(topicfilter::SubInfo::new(
+                                    packet.topicfilter.clone(),
+                                    Some(tx.clone()),
+                                ));
+                            }
+                        }
+
                         let packet = mqttcoder::Suback::new(
                             packet.message_id,
                             packet.subscription_list.len(),
@@ -410,6 +466,7 @@ async fn process(
     config: Arc<Config>,
     sender: broadcast::Sender<PublishedPacket>,
     connection_map: connection_store::ConnectionStateDB,
+    subscription_map: SubscriptionsDB,
 ) -> io::Result<()> {
     let socket = match acceptor.accept(socket).await {
         Ok(value) => value,
@@ -437,7 +494,7 @@ async fn process(
             connection_map,
             tx,
             config,
-            sender) => {
+            sender, subscription_map) => {
 
             }
         /* [TODO] cancel from circuit breaker */

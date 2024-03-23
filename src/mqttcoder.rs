@@ -234,7 +234,7 @@ pub struct Subscribe {
 
 #[derive(Debug)]
 pub struct SubscriptionInfo {
-    topicfilter: String,
+    pub topicfilter: String,
     qos: u8,
 }
 
