@@ -191,8 +191,20 @@ async fn handle_device_connection(
     let listener = TcpListener::bind(config.address).await.unwrap();
     println!("handle connection");
     loop {
+        println!("handle connection1");
         let (mut stream, addr) = listener.accept().await.unwrap();
         let acceptor = acceptor.clone();
+        let config = config.clone();
+        let sender = sender.clone();
+        let connection_map = connection_map.clone();
+        tokio::spawn(async move {
+            if let Err(err) =
+                process_connection(&mut stream, acceptor, config, sender, connection_map).await
+            {
+                println!("Error process from {:?}, err {:?}", addr, err);
+            }
+        });
+        /*
         if let Err(err) = process_connection(
             &mut stream,
             acceptor,
@@ -206,6 +218,7 @@ async fn handle_device_connection(
         } else {
             println!("Shutdown process from {:?} Successfully", addr);
         }
+        */
     }
 }
 
@@ -276,8 +289,9 @@ async fn process_connection(
     connection_map: connection_store::ConnectionStateDB,
 ) -> io::Result<()> {
     // Subscrptionの共有
-    let subscription_store = Arc::new(Mutex::new(topicfilter::TopicFilterStore::new()));
+    println!("Process Connection");
 
+    let subscription_store = Arc::new(Mutex::new(topicfilter::TopicFilterStore::new()));
     if let Err(err) = process(
         socket,
         acceptor,
@@ -468,6 +482,7 @@ async fn process(
     connection_map: connection_store::ConnectionStateDB,
     subscription_map: SubscriptionsDB,
 ) -> io::Result<()> {
+    println!("process");
     let socket = match acceptor.accept(socket).await {
         Ok(value) => value,
         Err(error) => {
