@@ -1,11 +1,21 @@
-use itertools::Itertools;
+use crate::mqttcoder;
 
-struct TopicFilterStore {
-    elements: Vec<Box<dyn TopicFilter>>,
+use itertools::Itertools;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+use tokio::sync::mpsc;
+
+pub type SubscriptionStore = Arc<Mutex<TopicFilterStore<SubInfo>>>;
+
+pub struct TopicFilterStore<T> {
+    elements: Vec<T>,
 }
 
+#[derive(Debug)]
 pub struct SubInfo {
     topicfilter_elements: Vec<String>,
+    pub sender: Option<mpsc::Sender<mqttcoder::MQTTPacket>>,
 }
 
 impl TopicFilter for SubInfo {
@@ -15,58 +25,83 @@ impl TopicFilter for SubInfo {
 }
 
 impl SubInfo {
-    fn new(topicfilter: String) -> Self {
+    pub fn new(topicfilter: String, sender: Option<mpsc::Sender<mqttcoder::MQTTPacket>>) -> Self {
         SubInfo {
             topicfilter_elements: topicfilter.split('/').map(|s| s.to_string()).collect(),
+            sender,
         }
     }
 }
-
 pub trait TopicFilter {
     fn get_topic_filter(&self) -> &Vec<String>;
 }
 
-impl TopicFilterStore {
+impl<T: TopicFilter> TopicFilterStore<T> {
     pub fn new() -> Self {
         return TopicFilterStore { elements: vec![] };
     }
-    /*
-        pub fn register_topicfilter(&mut self, topicfilter: String) -> std::io::Result<()> {
-            if topicfilter.split('/').any(|s| !self.valid(s)) {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Invalid Topicfilter",
-                ));
-            }
 
-            let p: Vec<String> = topicfilter.split('/').map(|s| s.to_string()).collect();
-            self.elements.push(p);
-            Ok(())
-        }
-    */
-    pub fn register_topicfilter<T: TopicFilter + 'static>(
-        &mut self,
-        topicfilter: T,
-    ) -> std::io::Result<()> {
+    pub fn register_topicfilter(&mut self, topicfilter: T) -> std::io::Result<()> {
         if topicfilter
             .get_topic_filter()
             .iter()
             .any(|s| !self.valid(s))
         {
-
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 "Invalid Topicfilter",
             ));
         }
-        self.elements.push(Box::new(topicfilter));
+        self.elements.push(topicfilter);
         Ok(())
+    }
+
+    pub fn get_topicfilter(&mut self, topic: &String) -> std::io::Result<Vec<&T>> {
+        let mut ret = vec![];
+        for topic_filter in &self.elements {
+            let mut matched = true;
+
+            for eob in topic
+                .split('/')
+                .into_iter()
+                .zip_longest(topic_filter.get_topic_filter())
+            {
+                match eob {
+                    itertools::EitherOrBoth::Both(te, tfe) => {
+                        if tfe == "#" {
+                            ret.push(topic_filter);
+                            break;
+                        }
+                        if te != tfe && tfe != "+" {
+                            // end
+                            matched = false;
+                            break;
+                        }
+                    }
+                    itertools::EitherOrBoth::Left(_) => {
+                        // end
+                        // topic: "hoge/fuga" filter: "hoge/" -> not match
+                        matched = false;
+                        break;
+                    }
+                    itertools::EitherOrBoth::Right(_) => {
+                        // end
+                        matched = false;
+                        break;
+                    }
+                }
+            }
+            if matched {
+                ret.push(topic_filter);
+            }
+            // check next filter
+        }
+        return Ok(ret);
     }
 
     pub fn topic_match(&mut self, topic: String) -> std::io::Result<bool> {
         for topic_filter in self.elements.iter() {
             let mut matched = true;
-
             for eob in topic
                 .split('/')
                 .into_iter()
@@ -124,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_check_element() {
-        let m = TopicFilterStore::new();
+        let m = TopicFilterStore::<SubInfo>::new();
         assert_eq!(m.valid("helloworld"), true);
         assert_eq!(m.valid("hello-world"), true);
         assert_eq!(m.valid("hello-worl.d"), true);
@@ -144,7 +179,7 @@ mod tests {
     fn test_aws_example_1() {
         let mut m = TopicFilterStore::new();
         let _ = m
-            .register_topicfilter(SubInfo::new("sensor/#".to_string()))
+            .register_topicfilter(SubInfo::new("sensor/#".to_string(), None))
             .unwrap();
         assert_eq!(m.topic_match("sensor/".to_string()).unwrap(), true);
         assert_eq!(
@@ -162,7 +197,7 @@ mod tests {
     fn test_aws_example_2() {
         let mut m = TopicFilterStore::new();
         let _ = m
-            .register_topicfilter(SubInfo::new("sensor/+/room1".to_string()))
+            .register_topicfilter(SubInfo::new("sensor/+/room1".to_string(), None))
             .unwrap();
         assert_eq!(
             m.topic_match("sensor/temperature/room1".to_string())
@@ -179,4 +214,28 @@ mod tests {
             false
         );
     }
+
+    #[test]
+    fn test_aws_example_3() {
+        let mut m = TopicFilterStore::new();
+        let _ = m
+            .register_topicfilter(SubInfo::new("sensor/+/room1".to_string(), None))
+            .unwrap();
+        let topic_filter = m
+            .get_topicfilter(&"sensor/temperature/room1".to_string())
+            .unwrap();
+
+        let expected = vec![SubInfo::new("sensor/+/room1".to_string(), None)];
+
+        assert_eq!(
+            topic_filter[0].get_topic_filter(),
+            expected[0].get_topic_filter()
+        );
+    }
 }
+
+/*
+fn assert_vec_eq<T>(a: Vec<T>, b: Vec<T>) {
+    for in a
+}
+*/
