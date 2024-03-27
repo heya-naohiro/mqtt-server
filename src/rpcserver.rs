@@ -77,7 +77,7 @@ impl PublishedPacketService for PlatformPublishedPacketService {
         let req = request.into_inner().to_owned();
         let device_id = req.device_id;
         let payload = req.payload;
-        let send_mqtt_packet = Publish::new(device_id.clone(), 0 as u32, payload);
+        let send_mqtt_packet = Publish::new(device_id.clone(), 0 as u32, payload, false);
         {
             let info: Option<&connection_store::ConnectInfo> = cmap.get(&device_id);
 

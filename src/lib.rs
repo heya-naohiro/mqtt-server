@@ -45,6 +45,7 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 
 type ServerResult<T> = Result<T, Box<dyn Error>>;
 type SubscriptionsDB = Arc<Mutex<topicfilter::TopicFilterStore<topicfilter::SubInfo>>>;
+type RetainPacketDB = Arc<Mutex<HashMap<String, mqttcoder::Publish>>>;
 
 #[derive(Debug)]
 pub struct ConnectInfo {
@@ -211,6 +212,9 @@ async fn handle_device_connection(
     let listener = TcpListener::bind(config.address).await.unwrap();
     let subscription_store = Arc::new(Mutex::new(topicfilter::TopicFilterStore::new()));
 
+    // Retain用にHashMapを共有する [TODO] HashMapでは良くないので構造化する
+    let retain_store = Arc::new(Mutex::new(HashMap::new()));
+
     info!("MQTT TCP Listener Running");
     loop {
         let (mut stream, addr) = listener.accept().await.unwrap();
@@ -219,6 +223,7 @@ async fn handle_device_connection(
         let sender = sender.clone();
         let connection_map = connection_map.clone();
         let subscription_store = subscription_store.clone();
+        let retain_store = retain_store.clone();
         tokio::spawn(async move {
             if let Err(err) = process_connection(
                 &mut stream,
@@ -227,6 +232,7 @@ async fn handle_device_connection(
                 sender,
                 connection_map,
                 subscription_store,
+                retain_store,
             )
             .await
             {
@@ -310,6 +316,7 @@ async fn process_connection(
     sender: broadcast::Sender<PublishedPacket>,
     connection_map: connection_store::ConnectionStateDB,
     subscription_store: SubscriptionsDB,
+    retain_store: RetainPacketDB,
 ) -> io::Result<()> {
     // Subscrptionの共有
     if let Err(err) = process(
@@ -319,6 +326,7 @@ async fn process_connection(
         sender,
         connection_map,
         subscription_store,
+        retain_store,
     )
     .await
     {
@@ -366,6 +374,7 @@ async fn recv_packet(
     config: Arc<Config>,
     sender: broadcast::Sender<PublishedPacket>,
     subscription_store: SubscriptionsDB,
+    retain_store: RetainPacketDB,
 ) -> io::Result<()> {
     /*
        DB Connection
@@ -466,6 +475,11 @@ async fn recv_packet(
                                 subscription_store_guard.remove_subscription(&gid);
                             }
                         }
+                        /* save the packet for retain */
+                        if packet.retain {
+                            let mut retain_store_guard = retain_store.lock().await;
+                            retain_store_guard.insert(packet.topic_name.clone(), packet.clone());
+                        }
 
                         /* user send */
                         let send_packet = PublishedPacket {
@@ -485,8 +499,8 @@ async fn recv_packet(
                         // gracefull shutdown
                         let mut subscription_store = subscription_store.lock().await;
 
-                        let client_id = match client_id {
-                            Some(ref client_id) => client_id,
+                        let client_id_4 = match client_id {
+                            Some(cid) => cid,
                             None => {
                                 error!("Client id is not found");
                                 return Err(io::Error::new(
@@ -495,7 +509,7 @@ async fn recv_packet(
                                 ));
                             }
                         };
-                        subscription_store.remove_subscription(client_id);
+                        subscription_store.remove_subscription(&client_id_4);
                         break;
                     }
                     mqttcoder::MQTTPacket::Subscribe(packet) => {
@@ -504,8 +518,8 @@ async fn recv_packet(
                             let mut subscription_store = subscription_store.lock().await;
                             for packet in &packet.subscription_list {
                                 // client_id check
-                                let client_id = match client_id {
-                                    Some(ref client_id) => client_id,
+                                let client_id_3 = match &client_id {
+                                    Some(client_id) => client_id,
                                     None => {
                                         error!("Client id is not found");
                                         return Err(io::Error::new(
@@ -519,9 +533,9 @@ async fn recv_packet(
                                     topicfilter::SubInfo::new(
                                         packet.topicfilter.clone(),
                                         Some(tx.clone()),
-                                        client_id.to_string(),
+                                        client_id_3.to_string(),
                                     ),
-                                    client_id.to_string(),
+                                    client_id_3.to_string(),
                                 ) {
                                     error!("Error subscription {:?}", err);
                                 }
@@ -536,6 +550,47 @@ async fn recv_packet(
                         if let Err(err) = tx.send(mqttcoder::MQTTPacket::Suback(packet)).await {
                             return Err(io::Error::new(io::ErrorKind::Other, err));
                         };
+
+                        /* retain processing ... */
+                        /* [TODO] reduce algorithmic complexity and retain may be good, another thread? */
+                        {
+                            let retain_store_guard = retain_store.lock().await;
+                            let mut subscription_store_guard = subscription_store.lock().await;
+
+                            for (topic, packet) in retain_store_guard.iter() {
+                                let l = match subscription_store_guard.get_topicfilter(topic) {
+                                    Err(err) => {
+                                        error!("Error broker get topic {}", err);
+                                        return Err(err);
+                                    }
+                                    Ok(r) => r,
+                                };
+
+                                let mut garbage_ids = vec![];
+                                let mut client_3 = client_id.clone();
+                                for s in l {
+                                    // [TODO] Refine structure
+                                    if s.client_id == client_3.take().unwrap() {
+                                        match &s.sender {
+                                            Some(sender) => {
+                                                // packet copy on memory for multi subscribers
+                                                if let Err(err) = sender
+                                                    .send(MQTTPacket::Publish(packet.clone()))
+                                                    .await
+                                                {
+                                                    garbage_ids.push(s.client_id.clone());
+                                                    error!(
+                                                        "Error send publilsh packet device broker {}",
+                                                        err
+                                                    );
+                                                }
+                                            }
+                                            None => error!("Error: Not Exist sender"),
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     mqttcoder::MQTTPacket::Pingreq(_packet) => {
                         debug!("Ping {:?}", _packet);
@@ -562,6 +617,7 @@ async fn process(
     sender: broadcast::Sender<PublishedPacket>,
     connection_map: connection_store::ConnectionStateDB,
     subscription_map: SubscriptionsDB,
+    retain_store: RetainPacketDB,
 ) -> io::Result<()> {
     let socket = match acceptor.accept(socket).await {
         Ok(value) => value,
@@ -589,7 +645,7 @@ async fn process(
             connection_map,
             tx,
             config,
-            sender, subscription_map) => {
+            sender, subscription_map, retain_store) => {
 
             }
         /* [TODO] cancel from circuit breaker */
