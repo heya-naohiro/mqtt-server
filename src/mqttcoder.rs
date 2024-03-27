@@ -311,15 +311,17 @@ pub struct Publish {
     // まずは小さいサイズ想定ですべてVec<u8>にコピーする
     pub payload: Vec<u8>,
     // [TODO]: QoS
+    pub retain: bool,
 }
 
 impl Publish {
     #[tracing::instrument(level = "trace")]
-    pub fn new(topic_name: String, message_id: u32, payload: Vec<u8>) -> Publish {
+    pub fn new(topic_name: String, message_id: u32, payload: Vec<u8>, retain: bool) -> Publish {
         Publish {
             topic_name,
             message_id,
             payload,
+            retain,
         }
     }
 
@@ -377,7 +379,11 @@ impl Publish {
     }
 
     #[tracing::instrument(level = "trace")]
-    pub fn from_byte(buf: &mut BytesMut, qos0: bool) -> Result<Option<(Publish, usize)>, Error> {
+    pub fn from_byte(
+        buf: &mut BytesMut,
+        qos0: bool,
+        retain: bool,
+    ) -> Result<Option<(Publish, usize)>, Error> {
         // topic length : 2 byte + Message Identification length: 2byte
         if buf.len() < 4 {
             return Ok(None);
@@ -410,6 +416,7 @@ impl Publish {
                 topic_name: String::from(topic_name),
                 message_id,
                 payload: vec![],
+                retain,
             },
             readsize,
         )));
@@ -444,7 +451,7 @@ struct Header {
     mtype: MQTTPacketHeader,
     dup: bool,
     qos: usize,
-    retain: bool,
+    pub retain: bool,
     remaining_length: usize,
 }
 
@@ -596,7 +603,7 @@ impl Decoder for MqttDecoder {
                         //let remain_length = header.remaining_length;
                         //
                         let (variable_header_only, readbyte) =
-                            match Publish::from_byte(src, header.qos == 0) {
+                            match Publish::from_byte(src, header.qos == 0, header.retain) {
                                 Ok(Some(value)) => value,
                                 Ok(None) => return Ok(None),
                                 Err(e) => return Err(e),
