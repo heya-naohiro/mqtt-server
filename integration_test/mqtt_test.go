@@ -9,8 +9,8 @@ import (
 	"os/exec"
 	"testing"
 	"time"
-
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+
 	"github.com/stretchr/testify/suite"
 )
 
@@ -34,6 +34,7 @@ func (suite *MySuite) SetupSuite() {
 	}
 	if err := cmd.Start(); err != nil {
 		suite.T().Error(err)
+
 	}
 
 	slurp, _ := io.ReadAll(stdErrorPipe)
@@ -56,7 +57,6 @@ func (suite *MySuite) TearDownTest() {
 
 // run test mqtt-server with args
 func (suite *MySuite) BeforeTest(suiteName, testName string) {
-
 	suite.T().Log(": BeforeTest")
 	suite.cmd = exec.Command(mqtt_server_binary)
 	suite.cmd.Stdout = os.Stdout
@@ -67,6 +67,7 @@ func (suite *MySuite) BeforeTest(suiteName, testName string) {
 		suite.T().Error(err)
 	}
 	time.Sleep(time.Second * 1)
+
 
 	// suiteName, testNameによってargsを変更する
 
@@ -145,6 +146,7 @@ func (suite *MySuite) TestConnectPublishSubscribe() {
 		suite.T().Error("Error timeout subscription")
 	}
 	suite.T().Logf("Success %s", msg)
+
 
 }
 
