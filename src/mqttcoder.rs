@@ -602,7 +602,7 @@ impl Decoder for MqttDecoder {
                         // Decoderに格納する
                         //let remain_length = header.remaining_length;
                         //
-                        let (variable_header_only, readbyte) =
+                        let (mut variable_header_only, readbyte) =
                             match Publish::from_byte(src, header.qos == 0, header.retain) {
                                 Ok(Some(value)) => value,
                                 Ok(None) => return Ok(None),
@@ -623,13 +623,39 @@ impl Decoder for MqttDecoder {
                         }
                         self.realremaining_length = self.realremaining_length - readbyte;
 
-                        self.packet = Some(MQTTPacket::Publish(variable_header_only));
-                        self.header = Some(header);
+                        //self.packet = Some(MQTTPacket::Publish(variable_header_only));
+                        //self.header = Some(header);
                         // process publish packet
                         // 強制的に次のターンに持ち込みpaylodを処理する（残りが何byteであろうと)
                         // 続きを処理しなければならない
-                        debug!("next!!!");
-                        Ok(None)
+                        debug!("next!!! len: {:?}", src.len());
+                        if src.len() <= 0 {
+                            return Ok(None);
+                        }
+
+                        let readbyte = match variable_header_only
+                            .payload_from_byte(src, self.realremaining_length)
+                        {
+                            Ok(value) => value,
+                            Err(_error) => {
+                                return Err(Error::new(ErrorKind::Other, "Invalid"));
+                            }
+                        };
+                        src.advance(readbyte);
+                        debug!("HERE!!!!! {:?}, {:?}", self.realremaining_length, readbyte);
+
+                        if self.realremaining_length < readbyte {
+                            return Err(Error::new(ErrorKind::Other, "Invalid byte size AAA"));
+                        }
+
+                        self.realremaining_length = self.realremaining_length - readbyte;
+                        if self.realremaining_length > src.len() {
+                            Ok(None)
+                        } else {
+                            // reset for next
+                            self.reset();
+                            Ok(Some(MQTTPacket::Publish(variable_header_only)))
+                        }
                     }
                     _ => {
                         //これ以上処理しないので（いまのところ）残りのbyteを破棄する
