@@ -39,3 +39,6 @@ jobs:
       run: cargo test --lib -- --nocapture
     - name: Test / Run integration tests
       run: cargo test --test '*' -- --nocapture --test-threads=1
+    - name: Test / Run new integration test (Go paho client)
+      working-directory: integration_test
+      run: go test -v
