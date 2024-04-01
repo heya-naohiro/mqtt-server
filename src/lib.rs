@@ -180,7 +180,6 @@ pub fn get_args() -> ServerResult<Config> {
 
     let cassandra_addr = matches.value_of("cassandra_addr").unwrap();
     let cassandra_addr = cassandra_addr;
-
     Ok(Config {
         serverconfig: config,
         address: addr,
@@ -440,6 +439,7 @@ async fn recv_packet(
 
                         /* broker send */
                         if config.brokermode {
+                            debug!("broker mode !!!!!!");
                             let mut subscription_store_guard = subscription_store.lock().await;
 
                             let l = match subscription_store_guard
