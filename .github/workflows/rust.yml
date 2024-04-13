@@ -20,11 +20,25 @@ jobs:
           - 9042:9042
         options: --health-cmd "cqlsh --debug" --health-interval 5s --health-retries 100
     steps:
-    - uses: actions/checkout@v3
+    - name: Clone repository
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+    - name: Install Python
+      uses: actions/setup-python@v2
+    - name: Restore mtime
+      run: python ./git-restore-mtime.py
     - name: protobuf install
       run: |
         sudo apt update -y
         sudo apt-get install -y protobuf-compiler libprotobuf-dev
+    - uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - name: Build
       run: cargo build
     - name: Prepare / Save test private key file from secrets
