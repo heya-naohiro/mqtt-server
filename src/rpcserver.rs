@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{error, info};
 
 use tonic::{Request, Response, Status};
 

@@ -4,7 +4,7 @@ use bytes::BytesMut;
 use std::io::{Error, ErrorKind};
 use tokio_util::codec::{Decoder, Encoder};
 use tracing;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, warn};
 
 #[derive(Debug)]
 pub enum MQTTPacket {

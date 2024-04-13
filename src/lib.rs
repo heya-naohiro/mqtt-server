@@ -12,15 +12,15 @@ use cdrs_tokio::load_balancing::RoundRobinLoadBalancingStrategy;
 use clap::{App, Arg};
 use futures::stream::StreamExt;
 use futures::SinkExt;
-use mqttcoder::{MQTTPacket, MQTTPacketHeader};
+use mqttcoder::MQTTPacket;
 use pki_types::{CertificateDer, PrivateKeyDer};
 use rpcserver::rpcserver::PublishedPacket;
 use rustls::ServerConfig;
 use rustls_pemfile::{certs, rsa_private_keys};
 use std::net::SocketAddr;
 use std::path::Path;
-use tokio::io::WriteHalf;
-use tokio::io::{AsyncWriteExt, ReadHalf};
+
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -155,7 +155,7 @@ pub fn get_args() -> ServerResult<Config> {
         .arg(
             Arg::with_name("non_broker")
                 .value_name("Non Broker mode")
-                .short("nb")
+                .short("n")
                 .long("--non-broker")
                 .required(false)
                 .help("server start in a mode where communication with clients occurs exclusively via gRPC, not through an MQTT broker, and direct communication between clients is not possible.")
@@ -164,7 +164,6 @@ pub fn get_args() -> ServerResult<Config> {
         .arg(
             Arg::with_name("non_tls")
                 .value_name("Non tls mode")
-                .short("ntls")
                 .long("--non-tls")
                 .required(false)
                 .help("non tls mode")
