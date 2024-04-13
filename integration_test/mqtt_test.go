@@ -34,8 +34,8 @@ func (suite *MySuite) SetupSuite() {
 		suite.T().Error(err)
 	}
 	if err := cmd.Start(); err != nil {
+		suite.T().Log(err)
 		suite.T().Error(err)
-
 	}
 
 	slurp, _ := io.ReadAll(stdErrorPipe)
