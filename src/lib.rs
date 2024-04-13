@@ -80,6 +80,7 @@ pub struct Config {
     pub address: SocketAddr,
     pub cassandra_addr: String,
     pub brokermode: bool,
+    pub tls: bool,
 }
 
 #[tracing::instrument(level = "trace")]
@@ -185,7 +186,7 @@ pub fn get_args() -> ServerResult<Config> {
         return Err(format!("address error, invalid format {}", addr).into());
     };
     let brokermode = !matches.is_present("non_broker");
-
+    let tls = !matches.is_present("non_tls");
     let cassandra_addr = matches.value_of("cassandra_addr").unwrap();
     let cassandra_addr = cassandra_addr;
     Ok(Config {
@@ -193,6 +194,7 @@ pub fn get_args() -> ServerResult<Config> {
         address: addr,
         cassandra_addr: cassandra_addr.to_string(),
         brokermode,
+        tls,
     })
 }
 
@@ -223,30 +225,56 @@ async fn handle_device_connection(
     // Retain用にHashMapを共有する [TODO] HashMapでは良くないので構造化する
     let retain_store = Arc::new(Mutex::new(HashMap::new()));
 
-    info!("MQTT TCP Listener Running");
-    loop {
-        let (mut stream, addr) = listener.accept().await.unwrap();
-        let acceptor = acceptor.clone();
-        let config = config.clone();
-        let sender = sender.clone();
-        let connection_map = connection_map.clone();
-        let subscription_store = subscription_store.clone();
-        let retain_store = retain_store.clone();
-        tokio::spawn(async move {
-            if let Err(err) = process_connection(
-                &mut stream,
-                acceptor,
-                config,
-                sender,
-                connection_map,
-                subscription_store,
-                retain_store,
-            )
-            .await
-            {
-                error!("Error process from {:?}, err {:?}", addr, err);
-            }
-        });
+    if config.tls {
+        info!("MQTT TLS Listener Running");
+        loop {
+            let (mut stream, addr) = listener.accept().await.unwrap();
+            let acceptor = acceptor.clone();
+            let config = config.clone();
+            let sender = sender.clone();
+            let connection_map = connection_map.clone();
+            let subscription_store = subscription_store.clone();
+            let retain_store = retain_store.clone();
+            tokio::spawn(async move {
+                if let Err(err) = process_connection_tls(
+                    &mut stream,
+                    acceptor,
+                    config,
+                    sender,
+                    connection_map,
+                    subscription_store,
+                    retain_store,
+                )
+                .await
+                {
+                    error!("Error process from {:?}, err {:?}", addr, err);
+                }
+            });
+        }
+    } else {
+        info!("MQTT TCP Listener Running");
+        loop {
+            let (mut stream, addr) = listener.accept().await.unwrap();
+            let config = config.clone();
+            let sender = sender.clone();
+            let connection_map = connection_map.clone();
+            let subscription_store = subscription_store.clone();
+            let retain_store = retain_store.clone();
+            tokio::spawn(async move {
+                if let Err(err) = process_connection_tcp(
+                    &mut stream,
+                    config,
+                    sender,
+                    connection_map,
+                    subscription_store,
+                    retain_store,
+                )
+                .await
+                {
+                    error!("Error process from {:?}, err {:?}", addr, err);
+                }
+            });
+        }
     }
 }
 
@@ -317,7 +345,7 @@ pub async fn run_main(config: Config, receiver: oneshot::Receiver<bool>) -> io::
     return Ok(());
 }
 
-async fn process_connection(
+async fn process_connection_tls(
     socket: &mut TcpStream,
     acceptor: TlsAcceptor,
     config: Arc<Config>,
@@ -327,9 +355,39 @@ async fn process_connection(
     retain_store: RetainPacketDB,
 ) -> io::Result<()> {
     // Subscrptionの共有
-    if let Err(err) = process(
+    if let Err(err) = process_tls(
         socket,
         acceptor,
+        config,
+        sender,
+        connection_map,
+        subscription_store,
+        retain_store,
+    )
+    .await
+    {
+        error!("Error process from err {:?}", err);
+        socket.shutdown().await?;
+        return Err(err);
+    } else {
+        debug!("Shutdown process from Successfully");
+        socket.flush().await?;
+        socket.shutdown().await?;
+    }
+    return Ok(());
+}
+
+async fn process_connection_tcp(
+    socket: &mut TcpStream,
+    config: Arc<Config>,
+    sender: broadcast::Sender<PublishedPacket>,
+    connection_map: connection_store::ConnectionStateDB,
+    subscription_store: SubscriptionsDB,
+    retain_store: RetainPacketDB,
+) -> io::Result<()> {
+    // Subscrptionの共有
+    if let Err(err) = process_tcp(
+        socket,
         config,
         sender,
         connection_map,
@@ -623,7 +681,7 @@ where
     return Ok(());
 }
 
-async fn process(
+async fn process_tls(
     socket: &mut TcpStream,
     acceptor: TlsAcceptor,
     config: Arc<Config>,
@@ -640,6 +698,41 @@ async fn process(
     };
 
     let (rd, wr) = split(socket);
+
+    let decoder = mqttcoder::MqttDecoder::new();
+    let frame_reader = FramedRead::new(rd, decoder);
+    let encoder = mqttcoder::MqttEncoder::new();
+
+    let frame_writer = FramedWrite::new(wr, encoder);
+
+    let (tx, rx) = mpsc::channel(32);
+
+    tokio::select! {
+        _ = send_packet(frame_writer, rx) => {
+
+        }
+        _ = recv_packet(
+            frame_reader,
+            connection_map,
+            tx,
+            config,
+            sender, subscription_map, retain_store) => {
+
+            }
+        /* [TODO] cancel from circuit breaker */
+    }
+    return Ok(());
+}
+
+async fn process_tcp(
+    stream: &mut TcpStream,
+    config: Arc<Config>,
+    sender: broadcast::Sender<PublishedPacket>,
+    connection_map: connection_store::ConnectionStateDB,
+    subscription_map: SubscriptionsDB,
+    retain_store: RetainPacketDB,
+) -> io::Result<()> {
+    let (rd, wr) = split(stream);
 
     let decoder = mqttcoder::MqttDecoder::new();
     let frame_reader = FramedRead::new(rd, decoder);
