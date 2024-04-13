@@ -19,8 +19,8 @@ use rustls::ServerConfig;
 use rustls_pemfile::{certs, rsa_private_keys};
 use std::net::SocketAddr;
 use std::path::Path;
-use tokio::io::WriteHalf;
-use tokio::io::{AsyncWriteExt, ReadHalf};
+
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -155,10 +155,18 @@ pub fn get_args() -> ServerResult<Config> {
         .arg(
             Arg::with_name("non_broker")
                 .value_name("Non Broker mode")
-                .short("nb")
+                .short("n")
                 .long("--non-broker")
                 .required(false)
                 .help("server start in a mode where communication with clients occurs exclusively via gRPC, not through an MQTT broker, and direct communication between clients is not possible.")
+                .takes_value(false),
+        )
+        .arg(
+            Arg::with_name("non_tls")
+                .value_name("Non tls mode")
+                .long("--non-tls")
+                .required(false)
+                .help("non tls mode")
                 .takes_value(false),
         )
         .get_matches();
@@ -209,6 +217,7 @@ async fn handle_device_connection(
     let server_config = config.serverconfig.clone();
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
     let listener = TcpListener::bind(config.address).await.unwrap();
+
     let subscription_store = Arc::new(Mutex::new(topicfilter::TopicFilterStore::new()));
 
     // Retain用にHashMapを共有する [TODO] HashMapでは良くないので構造化する
@@ -341,13 +350,15 @@ async fn process_connection(
 }
 
 #[tracing::instrument(level = "trace")]
-async fn send_packet(
-    mut frame_writer: FramedWrite<
-        WriteHalf<tokio_rustls::server::TlsStream<&mut TcpStream>>,
-        mqttcoder::MqttEncoder,
-    >,
+async fn send_packet<T>(
+    mut frame_writer: FramedWrite<T, mqttcoder::MqttEncoder>,
     mut rx: mpsc::Receiver<MQTTPacket>,
-) -> io::Result<()> {
+) -> io::Result<()>
+where
+    T: std::fmt::Debug,
+    FramedWrite<T, mqttcoder::MqttEncoder>:
+        futures::Sink<MQTTPacket, Error = io::Error> + std::fmt::Debug + std::marker::Unpin,
+{
     while let Some(packet) = rx.recv().await {
         let result = frame_writer.send(packet).await;
         match result {
@@ -355,7 +366,7 @@ async fn send_packet(
                 debug!("Success Send Packet")
             }
             Err(err) => {
-                error!("Error Send Packet {:?}", err)
+                error!("Error Send Packet: {:?}", err)
             }
         }
     }
@@ -363,18 +374,20 @@ async fn send_packet(
 }
 
 #[tracing::instrument(level = "trace")]
-async fn recv_packet(
-    mut frame_reader: FramedRead<
-        ReadHalf<tokio_rustls::server::TlsStream<&mut TcpStream>>,
-        mqttcoder::MqttDecoder,
-    >,
+async fn recv_packet<T>(
+    mut frame_reader: FramedRead<T, mqttcoder::MqttDecoder>,
     connection_map: connection_store::ConnectionStateDB,
     tx: mpsc::Sender<MQTTPacket>,
     config: Arc<Config>,
     sender: broadcast::Sender<PublishedPacket>,
     subscription_store: SubscriptionsDB,
     retain_store: RetainPacketDB,
-) -> io::Result<()> {
+) -> io::Result<()>
+where
+    T: std::fmt::Debug,
+    FramedRead<T, mqttcoder::MqttDecoder>:
+        futures::Stream<Item = Result<MQTTPacket, io::Error>> + std::marker::Unpin,
+{
     /*
        DB Connection
     */

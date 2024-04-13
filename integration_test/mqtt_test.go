@@ -34,8 +34,8 @@ func (suite *MySuite) SetupSuite() {
 		suite.T().Error(err)
 	}
 	if err := cmd.Start(); err != nil {
+		suite.T().Log(err)
 		suite.T().Error(err)
-
 	}
 
 	slurp, _ := io.ReadAll(stdErrorPipe)
@@ -62,7 +62,7 @@ func (suite *MySuite) BeforeTest(suiteName, testName string) {
 	suite.cmd = exec.Command(mqtt_server_binary)
 	suite.cmd.Stdout = os.Stdout
 	suite.cmd.Dir = ".."
-	//suite.cmd.WaitDelay = 1 * time.Second
+	suite.cmd.WaitDelay = 1 * time.Second
 
 	if err := suite.cmd.Start(); err != nil {
 		suite.T().Error(err)

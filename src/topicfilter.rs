@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use tokio::sync::mpsc;
 use tracing;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, trace, warn};
 
 #[derive(Debug)]
 pub struct TopicFilterStore<T> {
