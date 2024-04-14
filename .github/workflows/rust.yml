@@ -36,7 +36,6 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
           ${{ runner.os }}-cargo-
-
     - name: Install Python
       uses: actions/setup-python@v2
     - name: Restore mtime
