@@ -143,12 +143,12 @@ impl Connect {
     pub fn from_byte(buf: &mut BytesMut) -> Result<Option<(Connect, usize)>, Error> {
         let protocol_name_length = ((buf[0] as usize) << 8) + buf[1] as usize;
         debug!("protocol_name_length: {:?}", protocol_name_length);
-
+        debug!("protocol_name: {:?}", &buf[2..2 + protocol_name_length]);
         // e.g. MQIsdp v3.1
         let protocolname = if let Ok(str) = std::str::from_utf8(&buf[2..2 + protocol_name_length]) {
             str.to_owned()
         } else {
-            return Err(Error::new(ErrorKind::Other, "Invalid"));
+            return Err(Error::new(ErrorKind::Other, "Invalid Protocol"));
         };
 
         debug!("protocolname: {:?}", protocolname);
@@ -389,6 +389,7 @@ impl Publish {
             return Ok(None);
         }
         let topic_length: usize = ((buf[0] as usize) << 8) + buf[1] as usize;
+        debug!("topiclength: {:?}", topic_length);
         if buf.len() < topic_length + 4 {
             return Ok(None);
         }
@@ -399,6 +400,7 @@ impl Publish {
                 return Err(Error::new(ErrorKind::Other, "Invalid"));
             }
         };
+        debug!("topic_name: {:?}", topic_name);
         let (message_id, readsize) = if qos0 {
             (0, 2 + topic_length)
         } else {
@@ -463,6 +465,7 @@ fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
         return Ok(None);
     } else {
         let byte = src[0];
+        debug!("header one byte {:08b}", byte);
         let mut advance = 1; //header's 1byte
         let dup = byte & 0b00001000 == 0b00001000;
         let qos = (byte & 0b00000110) >> 1;
@@ -471,8 +474,9 @@ fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
         // "残りの長さ"の箇所は最大4つ
         for pos in 0..=3 {
             let byte = src[pos + 1];
+            debug!("header: pos: {:?} {:08b}", pos, byte);
             advance += 1; //variable header's length byte
-            remaining_length += (byte as usize & 0b0111111) << (pos * 7);
+            remaining_length += (byte as usize & 0b01111111) << (pos * 7);
             if (byte & 0b10000000) == 0 {
                 break;
             } else {
@@ -511,11 +515,9 @@ impl Decoder for MqttDecoder {
 
     #[tracing::instrument(level = "trace")]
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        debug!("Decode top header ??? {:?}", self.header);
+        debug!("Decode top header{:?}", self.header);
         match &self.header {
             None => {
-                let length = src.len();
-                debug!("Length: {:?}", length);
                 if src.len() < 2 {
                     return Ok(None);
                 }
@@ -531,6 +533,7 @@ impl Decoder for MqttDecoder {
                 //self.header = Some(header);
                 debug!("header {:?}", header);
                 debug!("fixed header advance {:?} bytes", readbyte);
+                debug!("remain {:?}", self.realremaining_length);
 
                 src.advance(readbyte);
                 match header.mtype {
@@ -583,7 +586,7 @@ impl Decoder for MqttDecoder {
                         // [TODO] advanceはheaderベースでやって安全性を高める
                         src.advance(readbyte);
                         if self.realremaining_length < readbyte {
-                            return Err(Error::new(ErrorKind::Other, "Invalid byte size zbbb"));
+                            return Err(Error::new(ErrorKind::Other, "Invalid byte size zbbb 2"));
                         }
                         self.realremaining_length = self.realremaining_length - readbyte;
 
@@ -622,12 +625,6 @@ impl Decoder for MqttDecoder {
                             return Err(Error::new(ErrorKind::Other, "Invalid byte size zbbb"));
                         }
                         self.realremaining_length = self.realremaining_length - readbyte;
-
-                        //self.packet = Some(MQTTPacket::Publish(variable_header_only));
-                        //self.header = Some(header);
-                        // process publish packet
-                        // 強制的に次のターンに持ち込みpaylodを処理する（残りが何byteであろうと)
-                        // 続きを処理しなければならない
                         debug!("next!!! len: {:?}", src.len());
                         if src.len() <= 0 {
                             return Ok(None);
