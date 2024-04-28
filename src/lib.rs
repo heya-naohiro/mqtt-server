@@ -4,6 +4,7 @@ use tracing;
 mod mqttcoder;
 mod rpcserver;
 mod topicfilter;
+use std::arch::x86_64;
 use std::fs::File;
 use std::io::{self, BufReader};
 //use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -489,7 +490,7 @@ where
                         }
                     }
                     mqttcoder::MQTTPacket::Publish(packet) => {
-                        debug!("Publish {:?}", packet);
+                        debug!("Packet::Publish {:?}", packet);
                         // [TODO] Data path
                         match cassandra_session {
                             Some(ref s) => {
@@ -573,7 +574,7 @@ where
                         let client_id_4 = match client_id {
                             Some(cid) => cid,
                             None => {
-                                error!("Client id is not found");
+                                warn!("Client id is not found");
                                 return Err(io::Error::new(
                                     io::ErrorKind::Other,
                                     "Client id is not found",
