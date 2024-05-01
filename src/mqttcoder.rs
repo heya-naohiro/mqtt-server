@@ -629,12 +629,12 @@ impl Decoder for MqttDecoder {
 
                 // [TODO] advanceはheaderベースでやって安全性を高める
                 // advanceは一番後にする
-                // src.advance(readbyte);
+                src.advance(readbyte);
                 // save packet temporary
                 self.realremaining_length = self.realremaining_length - readbyte;
                 // checkpoint
 
-                let readbyte2 =
+                let readbyte =
                     match variable_header_only.payload_from_byte(src, self.realremaining_length) {
                         Ok(value) => value,
                         Err(_error) => {
@@ -642,18 +642,7 @@ impl Decoder for MqttDecoder {
                         }
                     };
 
-                // insufficient
-                if readbyte2 == 0 {
-                    return Ok(None);
-                } else {
-                    debug!(
-                        "readbyte1 {} {}, remain {}",
-                        readbyte,
-                        readbyte2,
-                        src.remaining()
-                    );
-                    src.advance(readbyte + readbyte2);
-                }
+                src.advance(readbyte);
 
                 // reset for next
                 self.reset();
