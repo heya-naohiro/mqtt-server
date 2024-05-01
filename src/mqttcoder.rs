@@ -249,7 +249,7 @@ pub struct SubscriptionInfo {
 impl Subscribe {
     #[tracing::instrument(level = "trace")]
     pub fn from_byte(buf: &BytesMut) -> Result<Option<(Subscribe, usize)>, Error> {
-        if buf.len() < 2 {
+        if buf.remaining() < 2 {
             return Ok(None);
         }
         debug!("buf[1]: {:?} buf[0] {:?}", buf[1], buf[0]);
@@ -367,24 +367,12 @@ impl Publish {
 
     #[tracing::instrument(level = "trace")]
     pub fn payload_from_byte(&mut self, buf: &mut BytesMut, remain: usize) -> Result<usize, Error> {
-        debug!("->>>> {:?}", buf);
-        if buf.len() > remain {
+        if buf.remaining() >= remain {
             let added_vec: Vec<u8> = buf[..remain].to_vec();
             self.payload.extend_from_slice(&added_vec);
             return Ok(added_vec.len());
         }
-        let added_vec: Vec<u8> = buf.to_vec();
-        self.payload.extend_from_slice(&added_vec);
-        match std::str::from_utf8(&self.payload) {
-            Ok(v) => {
-                debug!("received: payload {:?}", v);
-            }
-            Err(err) => {
-                error!("payload utf8 error {:?}", err);
-            }
-        };
-
-        return Ok(added_vec.len());
+        return Ok(0);
     }
 
     #[tracing::instrument(level = "trace")]
@@ -401,7 +389,11 @@ impl Publish {
         debug!("received: topiclength: {:?}", topic_length);
 
         if buf.remaining() < topic_length + 4 {
-            warn!("received: length: {:?} < {:?}", buf.len(), topic_length + 4);
+            warn!(
+                "received: length: {:?} < {:?}",
+                buf.remaining(),
+                topic_length + 4
+            );
             return Ok(None);
         }
 
@@ -474,7 +466,7 @@ impl Header {}
 
 #[tracing::instrument(level = "trace")]
 fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
-    if src.len() < 2 {
+    if src.remaining() < 2 {
         debug!("Ok None");
         return Ok(None);
     } else {
@@ -495,7 +487,7 @@ fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
                 break;
             } else {
                 // check next byte
-                if src.len() < pos + 2 {
+                if src.remaining() < pos + 2 {
                     // insufficient buffer size
                     return Ok(None);
                 }
@@ -533,7 +525,7 @@ impl Decoder for MqttDecoder {
         match &self.header {
             Some(_) => {}
             None => {
-                if src.len() < 2 {
+                if src.remaining() < 2 {
                     return Ok(None);
                 }
 
@@ -591,11 +583,15 @@ impl Decoder for MqttDecoder {
                 Ok(Some(MQTTPacket::Connect(packet)))
             }
             MQTTPacketHeader::Disconnect => {
-                src.advance(src.len());
+                src.advance(src.remaining());
                 self.reset();
                 Ok(Some(MQTTPacket::Disconnect))
             }
             MQTTPacketHeader::Subscribe => {
+                if self.realremaining_length > src.remaining() {
+                    return Ok(None);
+                }
+
                 let (mut variable_header_only, readbyte) = match Subscribe::from_byte(src) {
                     Ok(Some(value)) => value,
                     Ok(None) => return Ok(None),
@@ -619,10 +615,9 @@ impl Decoder for MqttDecoder {
                 Ok(Some(MQTTPacket::Subscribe(variable_header_only)))
             }
             MQTTPacketHeader::Publish => {
-                // Decoderに格納する
-                //let remain_length = header.remaining_length;
-                //
-                debug!("received: Publish");
+                if self.realremaining_length > src.remaining() {
+                    return Ok(None);
+                }
                 let (mut variable_header_only, readbyte) =
                     match Publish::from_byte(src, header.qos == 0, header.retain) {
                         Ok(Some(value)) => value,
@@ -632,54 +627,41 @@ impl Decoder for MqttDecoder {
                         Err(e) => return Err(e),
                     };
 
-                debug!(
-                    "received: variable header advance {:?} bytes, realremaining_length {:?}",
-                    readbyte, self.realremaining_length
-                );
-                debug!("variable header {:?}", variable_header_only);
                 // [TODO] advanceはheaderベースでやって安全性を高める
-                src.advance(readbyte);
+                // advanceは一番後にする
+                // src.advance(readbyte);
                 // save packet temporary
-                debug!("byte check {:?} {:?}", self.realremaining_length, readbyte);
-                if self.realremaining_length < readbyte {
-                    error!("received: {:?} < {:?}", self.realremaining_length, readbyte);
-                    return Err(Error::new(ErrorKind::Other, "Invalid byte size zbbb"));
-                }
                 self.realremaining_length = self.realremaining_length - readbyte;
-                debug!("next!!! len: {:?}", src.len());
-                if src.len() <= 0 {
-                    warn!("received: length: {:?} ", src.len());
-                    return Ok(None);
-                }
+                // checkpoint
 
-                let readbyte =
+                let readbyte2 =
                     match variable_header_only.payload_from_byte(src, self.realremaining_length) {
                         Ok(value) => value,
                         Err(_error) => {
                             return Err(Error::new(ErrorKind::Other, "Invalid"));
                         }
                     };
-                src.advance(readbyte);
-                debug!("HERE!!!!! {:?}, {:?}", self.realremaining_length, readbyte);
 
-                if self.realremaining_length < readbyte {
-                    return Err(Error::new(ErrorKind::Other, "Invalid byte size AAA"));
-                }
-
-                self.realremaining_length = self.realremaining_length - readbyte;
-                debug!("received: a????????");
-                if self.realremaining_length > src.len() {
-                    debug!("received: Ok nonew");
-                    Ok(None)
+                // insufficient
+                if readbyte2 == 0 {
+                    return Ok(None);
                 } else {
-                    // reset for next
-                    self.reset();
-                    Ok(Some(MQTTPacket::Publish(variable_header_only)))
+                    debug!(
+                        "readbyte1 {} {}, remain {}",
+                        readbyte,
+                        readbyte2,
+                        src.remaining()
+                    );
+                    src.advance(readbyte + readbyte2);
                 }
+
+                // reset for next
+                self.reset();
+                Ok(Some(MQTTPacket::Publish(variable_header_only)))
             }
             _ => {
                 //これ以上処理しないので（いまのところ）残りのbyteを破棄する
-                src.advance(src.len());
+                src.advance(src.remaining());
                 Err(Error::new(ErrorKind::Other, "Invalid"))
             }
         }
