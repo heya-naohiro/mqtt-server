@@ -50,10 +50,13 @@ type RetainPacketDB = Arc<Mutex<HashMap<String, mqttcoder::Publish>>>;
 #[derive(Debug)]
 pub struct ConnectInfo {
     pub connect: mqttcoder::Connect,
-    pub sender: mpsc::Sender<MQTTPacket>,
+    pub sender: mpsc::UnboundedSender<MQTTPacket>,
 }
 impl ConnectInfo {
-    pub fn new(connect: mqttcoder::Connect, sender: mpsc::Sender<MQTTPacket>) -> ConnectInfo {
+    pub fn new(
+        connect: mqttcoder::Connect,
+        sender: mpsc::UnboundedSender<MQTTPacket>,
+    ) -> ConnectInfo {
         ConnectInfo {
             connect,
             sender,
@@ -99,7 +102,7 @@ pub fn load_keys(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
 pub fn run(config: Config) -> ServerResult<()> {
     // log setting
     tracing_subscriber::fmt()
-        .with_max_level(Level::DEBUG)
+        .with_max_level(Level::INFO)
         .init();
 
     info!("Hello log world");
@@ -281,6 +284,7 @@ async fn handle_device_connection(
 #[tokio::main]
 async fn start_main(config: Config) -> io::Result<()> {
     info!("start tokio main");
+    //console_subscriber::init();
     let (mut sender, receiver) = oneshot::channel::<bool>();
     let _ = tokio::spawn(run_main(config, receiver)).await;
     sender.closed().await;
@@ -370,7 +374,7 @@ async fn process_connection_tls(
         socket.shutdown().await?;
         return Err(err);
     } else {
-        debug!("Shutdown process from Successfully");
+        //debug!("Shutdown process from Successfully");
         socket.flush().await?;
         socket.shutdown().await?;
     }
@@ -400,7 +404,7 @@ async fn process_connection_tcp(
         socket.shutdown().await?;
         return Err(err);
     } else {
-        debug!("Shutdown process from Successfully");
+        //debug!("Shutdown process from Successfully");
         socket.flush().await?;
         socket.shutdown().await?;
     }
@@ -410,7 +414,7 @@ async fn process_connection_tcp(
 #[tracing::instrument(level = "trace")]
 async fn send_packet<T>(
     mut frame_writer: FramedWrite<T, mqttcoder::MqttEncoder>,
-    mut rx: mpsc::Receiver<MQTTPacket>,
+    mut rx: mpsc::UnboundedReceiver<MQTTPacket>,
 ) -> io::Result<()>
 where
     T: std::fmt::Debug,
@@ -435,7 +439,7 @@ where
 async fn recv_packet<T>(
     mut frame_reader: FramedRead<T, mqttcoder::MqttDecoder>,
     connection_map: connection_store::ConnectionStateDB,
-    tx: mpsc::Sender<MQTTPacket>,
+    tx: mpsc::UnboundedSender<MQTTPacket>,
     config: Arc<Config>,
     sender: broadcast::Sender<PublishedPacket>,
     subscription_store: SubscriptionsDB,
@@ -472,7 +476,7 @@ where
                 debug!("received: {:?}", data);
                 match data {
                     mqttcoder::MQTTPacket::Connect(packet) => {
-                        debug!("Connect {:?}", packet);
+                        //debug!("Connect {:?}", packet);
                         /* Store Hashmap */
                         let mut cmap = connection_map.lock().await;
                         /* [TODO] Need Check Client id already exist, close previous session  */
@@ -484,12 +488,12 @@ where
                         );
                         client_id = Some(client_id_2);
                         let packet = mqttcoder::Connack::new();
-                        if let Err(err) = tx.send(mqttcoder::MQTTPacket::Connack(packet)).await {
+                        if let Err(err) = tx.send(mqttcoder::MQTTPacket::Connack(packet)) {
                             return Err(io::Error::new(io::ErrorKind::Other, err));
                         }
                     }
                     mqttcoder::MQTTPacket::Publish(packet) => {
-                        debug!("Packet::Publish {:?}", packet);
+                        //debug!("Packet::Publish {:?}", packet);
                         // [TODO] Data path
                         match cassandra_session {
                             Some(ref s) => {
@@ -510,9 +514,8 @@ where
 
                         /* broker send */
                         if config.brokermode {
-                            debug!("broker mode !!!!!!");
+                            debug!("Published Packet: {:?}", packet);
                             let mut subscription_store_guard = subscription_store.lock().await;
-
                             let l = match subscription_store_guard
                                 .get_topicfilter(&packet.topic_name)
                             {
@@ -522,14 +525,13 @@ where
                                 }
                                 Ok(r) => r,
                             };
-
                             let mut garbage_ids = vec![];
                             for s in l {
                                 match &s.sender {
                                     Some(sender) => {
                                         // packet copy on memory for multi subscribers
                                         if let Err(err) =
-                                            sender.send(MQTTPacket::Publish(packet.clone())).await
+                                            sender.send(MQTTPacket::Publish(packet.clone()))
                                         {
                                             garbage_ids.push(s.client_id.clone());
                                             error!(
@@ -565,7 +567,7 @@ where
                         }
                     }
                     mqttcoder::MQTTPacket::Disconnect => {
-                        debug!("Disconnect");
+                        //debug!("Disconnect");
                         // disconnect
                         // gracefull shutdown
                         let mut subscription_store = subscription_store.lock().await;
@@ -584,7 +586,7 @@ where
                         break;
                     }
                     mqttcoder::MQTTPacket::Subscribe(packet) => {
-                        debug!("Subscribe {:?}", packet);
+                        //debug!("Subscribe {:?}", packet);
                         {
                             let mut subscription_store = subscription_store.lock().await;
                             for packet in &packet.subscription_list {
@@ -618,7 +620,7 @@ where
                             packet.subscription_list.len(),
                         );
                         // [TODO] Error handling
-                        if let Err(err) = tx.send(mqttcoder::MQTTPacket::Suback(packet)).await {
+                        if let Err(err) = tx.send(mqttcoder::MQTTPacket::Suback(packet)) {
                             return Err(io::Error::new(io::ErrorKind::Other, err));
                         };
 
@@ -645,9 +647,8 @@ where
                                         match &s.sender {
                                             Some(sender) => {
                                                 // packet copy on memory for multi subscribers
-                                                if let Err(err) = sender
-                                                    .send(MQTTPacket::Publish(packet.clone()))
-                                                    .await
+                                                if let Err(err) =
+                                                    sender.send(MQTTPacket::Publish(packet.clone()))
                                                 {
                                                     garbage_ids.push(s.client_id.clone());
                                                     error!(
@@ -664,10 +665,10 @@ where
                         }
                     }
                     mqttcoder::MQTTPacket::Pingreq(_packet) => {
-                        debug!("Ping {:?}", _packet);
+                        //debug!("Ping {:?}", _packet);
                         // ping / pingresp
                         let packet = mqttcoder::Pingresp::new();
-                        if let Err(err) = tx.send(mqttcoder::MQTTPacket::Pingresp(packet)).await {
+                        if let Err(err) = tx.send(mqttcoder::MQTTPacket::Pingresp(packet)) {
                             return Err(io::Error::new(io::ErrorKind::Other, err));
                         };
                     }
@@ -705,7 +706,7 @@ async fn process_tls(
 
     let frame_writer = FramedWrite::new(wr, encoder);
 
-    let (tx, rx) = mpsc::channel(32);
+    let (tx, rx) = mpsc::unbounded_channel();
 
     tokio::select! {
         _ = send_packet(frame_writer, rx) => {
@@ -740,7 +741,7 @@ async fn process_tcp(
 
     let frame_writer = FramedWrite::new(wr, encoder);
 
-    let (tx, rx) = mpsc::channel(32);
+    let (tx, rx) = mpsc::unbounded_channel();
 
     tokio::select! {
         _ = send_packet(frame_writer, rx) => {

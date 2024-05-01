@@ -31,9 +31,8 @@ cargo build
 ## Payload Storage
 If you specify the address of Cassandra, you can save the latest published payload to Cassandra.
 
-## option
+## Usage
 ```
-
 USAGE:
     mqtt-server [FLAGS] [OPTIONS]
 
@@ -41,6 +40,7 @@ FLAGS:
     -h, --help          Prints help information
     -n, --non-broker    server start in a mode where communication with clients occurs exclusively via gRPC, not through
                         an MQTT broker, and direct communication between clients is not possible.
+        --non-tls       non tls mode
     -V, --version       Prints version information
 
 OPTIONS:
@@ -51,3 +51,36 @@ OPTIONS:
     -k, --key <FILEPATH>                server key @ pem format [default: private.key]
 ```
 
+## Performance
+@ MacBook Pro (Retina, 15-inch, Mid 2015)
+
+tool: [https://github.com/inovex/mqtt-stresser](https://github.com/inovex/mqtt-stresser)
+```
+[~/mqtt-stresser]$./mqtt-stresser -broker tcp://localhost:8883 -num-clients 1 -num-messages 50000 -rampup-delay 1s -rampup-size 10 -global-timeout 180s -timeout 20s -publisher-qos 0
+1 worker started
+
+# Configuration
+Concurrent Clients: 1
+Messages / Client:  50000
+
+# Results
+Published Messages: 50000 (100%)
+Received Messages:  50000 (100%)
+Completed:          1 (100%)
+Errors:             0 (0%)
+
+# Publishing Throughput
+Fastest: 74755 msg/sec
+Slowest: 74755 msg/sec
+Median: 74755 msg/sec
+
+  < 74755 msg/sec  100%
+
+# Receiving Througput
+Fastest: 119381 msg/sec
+Slowest: 119381 msg/sec
+Median: 119381 msg/sec
+
+  < 119381 msg/sec  100%
+
+```
