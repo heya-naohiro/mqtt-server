@@ -84,3 +84,84 @@ Median: 119381 msg/sec
   < 119381 msg/sec  100%
 
 ```
+```
+$ ./mqtt-stresser -broker tcp://localhost:8883 -num-clients 100 -num-messages 5000 -rampup-size 10 -global-timeout 180s -timeout 20s -publisher-qos 0
+# Configuration
+Concurrent Clients: 10
+Messages / Client:  500000
+
+# Results
+Published Messages: 500000 (100%)
+Received Messages:  500000 (100%)
+Completed:          10 (100%)
+Errors:             0 (0%)
+
+# Publishing Throughput
+Fastest: 30030 msg/sec
+Slowest: 28068 msg/sec
+Median: 29399 msg/sec
+
+  < 28265 msg/sec  10%
+  < 29246 msg/sec  30%
+  < 29442 msg/sec  50%
+  < 29638 msg/sec  80%
+  < 30030 msg/sec  90%
+  < 30227 msg/sec  100%
+
+# Receiving Througput
+Fastest: 54237 msg/sec
+Slowest: 45185 msg/sec
+Median: 46254 msg/sec
+
+  < 46090 msg/sec  40%
+  < 46995 msg/sec  60%
+  < 48806 msg/sec  80%
+  < 53332 msg/sec  90%
+  < 55142 msg/sec  100%
+```
+
+```
+$ ./mqtt-stresser -broker tcp://localhost:8883 -num-clients 100 -num-messages 5000 -rampup-size 10 -global-timeout 180s -timeout 20s -publisher-qos 0
+# Configuration
+Concurrent Clients: 100
+Messages / Client:  500000
+
+# Results
+Published Messages: 500000 (100%)
+Received Messages:  500000 (100%)
+Completed:          100 (100%)
+Errors:             0 (0%)
+
+# Publishing Throughput
+Fastest: 26726 msg/sec
+Slowest: 12670 msg/sec
+Median: 16706 msg/sec
+
+  < 14076 msg/sec  6%
+  < 15481 msg/sec  19%
+  < 16887 msg/sec  51%
+  < 18292 msg/sec  73%
+  < 19698 msg/sec  83%
+  < 21103 msg/sec  89%
+  < 22509 msg/sec  94%
+  < 23915 msg/sec  96%
+  < 25320 msg/sec  99%
+  < 28131 msg/sec  100%
+
+# Receiving Througput
+Fastest: 50636 msg/sec
+Slowest: 1030 msg/sec
+Median: 1788 msg/sec
+
+  < 5991 msg/sec  60%
+  < 10951 msg/sec  70%
+  < 15912 msg/sec  77%
+  < 20873 msg/sec  80%
+  < 25833 msg/sec  81%
+  < 30794 msg/sec  84%
+  < 35754 msg/sec  92%
+  < 40715 msg/sec  93%
+  < 45676 msg/sec  98%
+  < 50636 msg/sec  99%
+  < 55597 msg/sec  100%
+```
