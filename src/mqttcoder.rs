@@ -467,7 +467,6 @@ impl Header {}
 #[tracing::instrument(level = "trace")]
 fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
     if src.remaining() < 2 {
-        //debug!("Ok None");
         return Ok(None);
     } else {
         let byte = src[0];
