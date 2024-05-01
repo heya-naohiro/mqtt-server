@@ -14,7 +14,7 @@ pub struct TopicFilterStore<T> {
 #[derive(Debug)]
 pub struct SubInfo {
     pub topicfilter_elements: Vec<String>,
-    pub sender: Option<mpsc::Sender<mqttcoder::MQTTPacket>>,
+    pub sender: Option<mpsc::UnboundedSender<mqttcoder::MQTTPacket>>,
     pub client_id: String,
 }
 
@@ -27,7 +27,7 @@ impl TopicFilter for SubInfo {
 impl SubInfo {
     pub fn new(
         topicfilter: String,
-        sender: Option<mpsc::Sender<mqttcoder::MQTTPacket>>,
+        sender: Option<mpsc::UnboundedSender<mqttcoder::MQTTPacket>>,
         client_id: String,
     ) -> Self {
         SubInfo {
@@ -116,13 +116,12 @@ impl<T: TopicFilter + Debug> TopicFilterStore<T> {
                     }
                 }
                 if matched {
-                    debug!("topic matched, so push {:?}", topic_filter);
+                    //debug!("topic matched, so push {:?}", topic_filter);
                     ret.push(topic_filter);
                 }
                 // check next filter
             }
         }
-
         return Ok(ret);
     }
 

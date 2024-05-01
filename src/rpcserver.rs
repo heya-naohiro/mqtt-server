@@ -83,7 +83,7 @@ impl PublishedPacketService for PlatformPublishedPacketService {
 
             match info {
                 Some(i) => {
-                    if let Err(err) = i.sender.send(MQTTPacket::Publish(send_mqtt_packet)).await {
+                    if let Err(err) = i.sender.send(MQTTPacket::Publish(send_mqtt_packet)) {
                         error!("Publish error {:?}", err);
                     }
                 }

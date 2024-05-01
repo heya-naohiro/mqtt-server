@@ -12,13 +12,13 @@ use tokio::sync::Mutex;
 #[derive(Debug)]
 pub struct ConnectInfo {
     pub connect: mqttcoder::Connect,
-    pub sender: mpsc::Sender<mqttcoder::MQTTPacket>,
+    pub sender: mpsc::UnboundedSender<mqttcoder::MQTTPacket>,
 }
 
 impl ConnectInfo {
     pub fn new(
         connect: mqttcoder::Connect,
-        sender: mpsc::Sender<mqttcoder::MQTTPacket>,
+        sender: mpsc::UnboundedSender<mqttcoder::MQTTPacket>,
     ) -> ConnectInfo {
         ConnectInfo {
             connect,
