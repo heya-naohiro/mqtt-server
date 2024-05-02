@@ -101,9 +101,7 @@ pub fn load_keys(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
 #[tracing::instrument(level = "trace")]
 pub fn run(config: Config) -> ServerResult<()> {
     // log setting
-    tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .init();
+    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
 
     info!("Hello log world");
     if let Err(err) = start_main(config) {
@@ -585,8 +583,12 @@ where
                         subscription_store.remove_subscription(&client_id_4);
                         break;
                     }
+                    mqttcoder::MQTTPacket::Unsubscribe(packet) => {
+                        //let mut subscription_store = subscription_store.lock().await;
+                        // [TODO]
+                        //for packet in &packet.unsubscription_list {}
+                    }
                     mqttcoder::MQTTPacket::Subscribe(packet) => {
-                        //debug!("Subscribe {:?}", packet);
                         {
                             let mut subscription_store = subscription_store.lock().await;
                             for packet in &packet.subscription_list {
