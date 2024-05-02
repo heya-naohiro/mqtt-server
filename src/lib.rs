@@ -116,6 +116,7 @@ pub fn run(config: Config) -> ServerResult<()> {
     };
     tracing_subscriber::fmt().with_max_level(l).init();
     info!("Loglevel {:?}", config.loglevel);
+
     if let Err(err) = start_main(config) {
         return Err(Box::new(err));
     };
