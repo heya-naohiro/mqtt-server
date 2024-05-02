@@ -1,3 +1,4 @@
+# [MqttServer](https://github.com/heya-naohiro/mqtt-server)
 > [!WARNING]
 > 🚧 This repository is for understanding the handling of MQTT and tokio, and experimental. It is a work in progress.
 
@@ -85,7 +86,8 @@ Median: 119381 msg/sec
 
 ```
 ```
-$ ./mqtt-stresser -broker tcp://localhost:8883 -num-clients 100 -num-messages 5000 -rampup-size 10 -global-timeout 180s -timeout 20s -publisher-qos 0
+$ ./mqtt-stresser -broker tcp://localhost:8883 -num-clients 10 -num-messages 50000 -rampup-size 10 -global-timeout 180s -timeout 20s -publisher-qos 0
+10 worker started
 # Configuration
 Concurrent Clients: 10
 Messages / Client:  500000
