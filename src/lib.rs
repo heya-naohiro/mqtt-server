@@ -84,6 +84,7 @@ pub struct Config {
     pub cassandra_addr: String,
     pub brokermode: bool,
     pub tls: bool,
+    pub debug: bool,
 }
 
 #[tracing::instrument(level = "trace")]
@@ -101,9 +102,14 @@ pub fn load_keys(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
 #[tracing::instrument(level = "trace")]
 pub fn run(config: Config) -> ServerResult<()> {
     // log setting
-    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
+    if config.debug {
+        tracing_subscriber::fmt()
+            .with_max_level(Level::DEBUG)
+            .init();
+    } else {
+        tracing_subscriber::fmt().with_max_level(Level::INFO).init();
+    }
 
-    info!("Hello log world");
     if let Err(err) = start_main(config) {
         return Err(Box::new(err));
     };
@@ -171,6 +177,15 @@ pub fn get_args() -> ServerResult<Config> {
                 .help("non tls mode")
                 .takes_value(false),
         )
+        .arg(
+            Arg::with_name("debug")
+                .value_name("for debug")
+                .short("d")
+                .long("--debug")
+                .required(false)
+                .help("log level debug")
+                .takes_value(false),
+        )
         .get_matches();
 
     let certs = load_certs(Path::new(matches.value_of("cert").unwrap()))?;
@@ -188,6 +203,7 @@ pub fn get_args() -> ServerResult<Config> {
     };
     let brokermode = !matches.is_present("non_broker");
     let tls = !matches.is_present("non_tls");
+    let debug = matches.is_present("debug");
     let cassandra_addr = matches.value_of("cassandra_addr").unwrap();
     let cassandra_addr = cassandra_addr;
     Ok(Config {
@@ -196,6 +212,7 @@ pub fn get_args() -> ServerResult<Config> {
         cassandra_addr: cassandra_addr.to_string(),
         brokermode,
         tls,
+        debug,
     })
 }
 
