@@ -153,7 +153,6 @@ pub fn get_args() -> ServerResult<Config> {
         .arg(
             Arg::with_name("cassandra_addr")
                 .value_name("CASSANDRA IPADDR")
-                .short("db_addr")
                 .long("--db_addr")
                 .default_value("")
                 .required(false)
@@ -180,7 +179,6 @@ pub fn get_args() -> ServerResult<Config> {
         .arg(
             Arg::with_name("debug")
                 .value_name("for debug")
-                .short("d")
                 .long("--debug")
                 .required(false)
                 .help("log level debug")
