@@ -56,6 +56,10 @@ OPTIONS:
 @ MacBook Pro (Retina, 15-inch, Mid 2015)
 
 tool: [https://github.com/inovex/mqtt-stresser](https://github.com/inovex/mqtt-stresser)
+
+<details>
+<summary>./mqtt-stresser -broker tcp://localhost:8883 -num-clients 1 -num-messages 50000 -rampup-delay 1s -rampup-size 10 -global-timeout 180s -timeout 20s -publisher-qos 0</summary>
+
 ```
 [~/mqtt-stresser]$./mqtt-stresser -broker tcp://localhost:8883 -num-clients 1 -num-messages 50000 -rampup-delay 1s -rampup-size 10 -global-timeout 180s -timeout 20s -publisher-qos 0
 1 worker started
@@ -85,6 +89,12 @@ Median: 119381 msg/sec
   < 119381 msg/sec  100%
 
 ```
+
+</details>
+
+<details>
+<summary>./mqtt-stresser -broker tcp://localhost:8883 -num-clients 10 -num-messages 50000 -rampup-size 10 -global-timeout 180s -timeout 20s -publisher-qos 0</summary>
+
 ```
 $ ./mqtt-stresser -broker tcp://localhost:8883 -num-clients 10 -num-messages 50000 -rampup-size 10 -global-timeout 180s -timeout 20s -publisher-qos 0
 10 worker started
@@ -121,6 +131,11 @@ Median: 46254 msg/sec
   < 53332 msg/sec  90%
   < 55142 msg/sec  100%
 ```
+
+</details>
+
+<details>
+<summary>./mqtt-stresser -broker tcp://localhost:8883 -num-clients 100 -num-messages 5000 -rampup-size 10 -global-timeout 180s -timeout 20s -publisher-qos 0</summary>
 
 ```
 $ ./mqtt-stresser -broker tcp://localhost:8883 -num-clients 100 -num-messages 5000 -rampup-size 10 -global-timeout 180s -timeout 20s -publisher-qos 0
@@ -167,3 +182,5 @@ Median: 1788 msg/sec
   < 50636 msg/sec  99%
   < 55597 msg/sec  100%
 ```
+
+</details>
