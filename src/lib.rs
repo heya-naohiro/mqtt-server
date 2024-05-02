@@ -48,6 +48,13 @@ type SubscriptionsDB = Arc<Mutex<topicfilter::TopicFilterStore<topicfilter::SubI
 type RetainPacketDB = Arc<Mutex<HashMap<String, mqttcoder::Publish>>>;
 
 #[derive(Debug)]
+enum LogLevel {
+    DEBUG,
+    TRACE,
+    INFO,
+}
+
+#[derive(Debug)]
 pub struct ConnectInfo {
     pub connect: mqttcoder::Connect,
     pub sender: mpsc::UnboundedSender<MQTTPacket>,
@@ -84,7 +91,7 @@ pub struct Config {
     pub cassandra_addr: String,
     pub brokermode: bool,
     pub tls: bool,
-    pub debug: bool,
+    pub loglevel: LogLevel,
 }
 
 #[tracing::instrument(level = "trace")]
@@ -102,14 +109,13 @@ pub fn load_keys(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
 #[tracing::instrument(level = "trace")]
 pub fn run(config: Config) -> ServerResult<()> {
     // log setting
-    if config.debug {
-        tracing_subscriber::fmt()
-            .with_max_level(Level::DEBUG)
-            .init();
-    } else {
-        tracing_subscriber::fmt().with_max_level(Level::INFO).init();
-    }
-
+    let l = match config.loglevel {
+        LogLevel::TRACE => Level::TRACE,
+        LogLevel::DEBUG => Level::DEBUG,
+        _ => Level::INFO,
+    };
+    tracing_subscriber::fmt().with_max_level(l).init();
+    info!("Loglevel {:?}", config.loglevel);
     if let Err(err) = start_main(config) {
         return Err(Box::new(err));
     };
@@ -184,6 +190,14 @@ pub fn get_args() -> ServerResult<Config> {
                 .help("log level debug")
                 .takes_value(false),
         )
+        .arg(
+            Arg::with_name("trace")
+                .value_name("for trace")
+                .long("--trace")
+                .required(false)
+                .help("log level trace")
+                .takes_value(false),
+        )
         .get_matches();
 
     let certs = load_certs(Path::new(matches.value_of("cert").unwrap()))?;
@@ -201,7 +215,13 @@ pub fn get_args() -> ServerResult<Config> {
     };
     let brokermode = !matches.is_present("non_broker");
     let tls = !matches.is_present("non_tls");
-    let debug = matches.is_present("debug");
+    let loglevel = if matches.is_present("trace") {
+        LogLevel::TRACE
+    } else if matches.is_present("debug") {
+        LogLevel::DEBUG
+    } else {
+        LogLevel::INFO
+    };
     let cassandra_addr = matches.value_of("cassandra_addr").unwrap();
     let cassandra_addr = cassandra_addr;
     Ok(Config {
@@ -210,7 +230,7 @@ pub fn get_args() -> ServerResult<Config> {
         cassandra_addr: cassandra_addr.to_string(),
         brokermode,
         tls,
-        debug,
+        loglevel,
     })
 }
 
