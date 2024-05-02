@@ -177,7 +177,7 @@ impl Connect {
         {
             str.to_owned()
         } else {
-            return Err(Error::new(ErrorKind::Other, "Invalid"));
+            return Err(Error::new(ErrorKind::Other, "connect invalid client id"));
         };
         let mut offset = offset + 6 + client_id_length;
         // Will: [TODO] Not implemented
@@ -197,7 +197,7 @@ impl Connect {
                 if let Ok(str) = std::str::from_utf8(&buf[(offset)..(offset + username_length)]) {
                     Some(str.to_owned())
                 } else {
-                    return Err(Error::new(ErrorKind::Other, "Invalid"));
+                    return Err(Error::new(ErrorKind::Other, "invalid username"));
                 };
             offset = 2 + username_length;
         }
@@ -210,7 +210,7 @@ impl Connect {
                 if let Ok(str) = std::str::from_utf8(&buf[(offset)..(offset + password_length)]) {
                     Some(str.to_owned())
                 } else {
-                    return Err(Error::new(ErrorKind::Other, "Invalid"));
+                    return Err(Error::new(ErrorKind::Other, "connect invalid password"));
                 };
             offset = 2 + password_length;
         }
@@ -276,7 +276,7 @@ impl Subscribe {
             {
                 str.to_owned()
             } else {
-                return Err(Error::new(ErrorKind::Other, "Invalid"));
+                return Err(Error::new(ErrorKind::Other, "invalid topicfilter"));
             };
             sub_counter = sub_counter + topiclength;
             ////debug!("topic fileter {:?}", topicfilter);
@@ -402,7 +402,7 @@ impl Publish {
             Ok(v) => v,
             Err(err) => {
                 error!("topic name utf8 error {:?}", err);
-                return Err(Error::new(ErrorKind::Other, "Invalid"));
+                return Err(Error::new(ErrorKind::Other, "topic name utf8 error"));
             }
         };
         //debug!("received: topic_name: {:?}", topic_name);
@@ -493,12 +493,15 @@ fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
             }
         }
         //上位4ビットを比較
+        println!("headerbyte:{:0>1$b}", byte >> 4, 4);
+        // Unsubscribe
         let mtype = match byte >> 4 {
             0b0001 => MQTTPacketHeader::Connect,
             0b1110 => MQTTPacketHeader::Disconnect,
             0b0011 => MQTTPacketHeader::Publish,
             0b1000 => MQTTPacketHeader::Subscribe,
             0b1100 => MQTTPacketHeader::Pingreq,
+            //[TODO] 0b1010 => MQTTPacketHeader::Unsubscribe,
             _ => MQTTPacketHeader::Other,
         };
         return Ok(Some((
@@ -605,7 +608,7 @@ impl Decoder for MqttDecoder {
                 // [TODO] advanceはheaderベースでやって安全性を高める
                 src.advance(readbyte);
                 if self.realremaining_length < readbyte {
-                    return Err(Error::new(ErrorKind::Other, "Invalid byte size zbbb 2"));
+                    return Err(Error::new(ErrorKind::Other, "Invalid byte size"));
                 }
                 self.realremaining_length = self.realremaining_length - readbyte;
 
@@ -643,7 +646,10 @@ impl Decoder for MqttDecoder {
                     match variable_header_only.payload_from_byte(src, self.realremaining_length) {
                         Ok(value) => value,
                         Err(_error) => {
-                            return Err(Error::new(ErrorKind::Other, "Invalid"));
+                            return Err(Error::new(
+                                ErrorKind::Other,
+                                "invalid publish payload from byte",
+                            ));
                         }
                     };
 
@@ -656,7 +662,7 @@ impl Decoder for MqttDecoder {
             _ => {
                 //これ以上処理しないので（いまのところ）残りのbyteを破棄する
                 src.advance(src.remaining());
-                Err(Error::new(ErrorKind::Other, "Invalid"))
+                Err(Error::new(ErrorKind::Other, "aboundon all"))
             }
         }
     }
@@ -683,7 +689,7 @@ impl Encoder<MQTTPacket> for MqttEncoder {
             MQTTPacket::Pingresp(x) => Ok(x.to_buf(buf)),
             _ => {
                 error!("Unexpected Encode packet");
-                Err(Error::new(ErrorKind::Other, "Invalid"))
+                Err(Error::new(ErrorKind::Other, "Unexpected Encode packet"))
             }
         };
         return res;
