@@ -13,7 +13,9 @@ pub enum MQTTPacket {
     Publish(Publish),
     Disconnect,
     Subscribe(Subscribe),
+    Unsubscribe(Unsubscribe),
     Suback(Suback),
+    Unsuback(Unsuback),
     Pingreq(Pingreq),
     Pingresp(Pingresp),
     _Other,
@@ -25,6 +27,7 @@ pub enum MQTTPacketHeader {
     _Connack,
     Publish,
     Subscribe,
+    Unsubscribe,
     Pingreq,
     Other,
 }
@@ -119,6 +122,26 @@ impl Suback {
             // all qos 0 ([TODO] qos negotiation)
             buf.put_u8(0);
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct Unsuback {
+    message_id: u16,
+}
+impl Unsuback {
+    // [TODO] all qos 0 now
+    #[tracing::instrument(level = "trace")]
+    pub fn new(message_id: u16) -> Unsuback {
+        // [TODO] Implement actual operation and return code
+        Unsuback { message_id }
+    }
+    #[tracing::instrument(level = "trace")]
+    pub fn to_buf(&self, buf: &mut BytesMut) {
+        let header: u8 = 0b10110000;
+        buf.put_u8(header);
+        buf.put_u8((self.message_id >> 8) as u8);
+        buf.put_u8(self.message_id as u8);
     }
 }
 
@@ -231,6 +254,51 @@ impl Connect {
             },
             offset,
         )))
+    }
+}
+#[derive(Debug)]
+pub struct Unsubscribe {
+    pub message_id: u16,
+    pub unsubscription_list: Vec<UnsubscriptionInfo>,
+}
+#[derive(Debug)]
+pub struct UnsubscriptionInfo {
+    pub topicfilter: String,
+}
+
+impl Unsubscribe {
+    #[tracing::instrument(level = "trace")]
+    pub fn from_byte(buf: &BytesMut, remain: usize) -> Result<Option<(Unsubscribe, usize)>, Error> {
+        let message_id: u16 = (buf[1] as u16) + ((buf[0] as u16) << 8);
+        let mut sub_counter: usize = 0;
+        let mut unsubscription_list = vec![];
+        loop {
+            let topiclength: usize =
+                buf[sub_counter + 1] as usize + ((buf[sub_counter] as usize) << 8);
+            sub_counter = sub_counter + 2;
+            let topicfilter = if let Ok(str) =
+                std::str::from_utf8(&buf[sub_counter..sub_counter + topiclength])
+            {
+                str.to_owned()
+            } else {
+                return Err(Error::new(ErrorKind::Other, "invalid topicfilter"));
+            };
+            sub_counter = sub_counter + topiclength;
+            unsubscription_list.push(UnsubscriptionInfo { topicfilter });
+            if remain == sub_counter {
+                break;
+            }
+            if remain < sub_counter {
+                return Err(Error::new(ErrorKind::Other, "invalid unsubscribe length"));
+            }
+        }
+        return Ok(Some((
+            Unsubscribe {
+                message_id,
+                unsubscription_list,
+            },
+            sub_counter,
+        )));
     }
 }
 
@@ -493,15 +561,13 @@ fn read_header(src: &mut BytesMut) -> Result<Option<(Header, usize)>, Error> {
             }
         }
         //上位4ビットを比較
-        println!("headerbyte:{:0>1$b}", byte >> 4, 4);
-        // Unsubscribe
         let mtype = match byte >> 4 {
             0b0001 => MQTTPacketHeader::Connect,
             0b1110 => MQTTPacketHeader::Disconnect,
             0b0011 => MQTTPacketHeader::Publish,
             0b1000 => MQTTPacketHeader::Subscribe,
             0b1100 => MQTTPacketHeader::Pingreq,
-            //[TODO] 0b1010 => MQTTPacketHeader::Unsubscribe,
+            0b1010 => MQTTPacketHeader::Unsubscribe,
             _ => MQTTPacketHeader::Other,
         };
         return Ok(Some((
@@ -659,6 +725,25 @@ impl Decoder for MqttDecoder {
                 self.reset();
                 Ok(Some(MQTTPacket::Publish(variable_header_only)))
             }
+            MQTTPacketHeader::Unsubscribe => {
+                if self.realremaining_length > src.remaining() {
+                    return Ok(None);
+                }
+                let result = Unsubscribe::from_byte(src, self.realremaining_length);
+                let (packet, size) = match result {
+                    Ok(Some((packet, size))) => (packet, size),
+                    Ok(None) => {
+                        return Ok(None);
+                    }
+                    Err(err) => {
+                        self.reset();
+                        return Err(err);
+                    }
+                };
+                src.advance(size);
+                self.reset();
+                Ok(Some(MQTTPacket::Unsubscribe(packet)))
+            }
             _ => {
                 //これ以上処理しないので（いまのところ）残りのbyteを破棄する
                 src.advance(src.remaining());
@@ -687,6 +772,7 @@ impl Encoder<MQTTPacket> for MqttEncoder {
             MQTTPacket::Suback(x) => Ok(x.to_buf(buf)),
             MQTTPacket::Publish(x) => Ok(x.to_buf(buf)),
             MQTTPacket::Pingresp(x) => Ok(x.to_buf(buf)),
+            MQTTPacket::Unsuback(x) => Ok(x.to_buf(buf)),
             _ => {
                 error!("Unexpected Encode packet");
                 Err(Error::new(ErrorKind::Other, "Unexpected Encode packet"))
